@@ -65,7 +65,3 @@ func scan() {
 		fmt.Printf("Published: %s\n", news.Published)
 	}
 }
-
-func main() {
-	scan()
-}
