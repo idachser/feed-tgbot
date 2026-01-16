@@ -24,8 +24,10 @@ func addHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	for _, url := range urls {
 		if !isValidURL(url) {
 			sendMsg(ctx, b, update.Message.Chat.ID, "Wrong URL: "+url)
+			continue
 		}
 
+		// add to storage
 		sendMsg(ctx, b, update.Message.Chat.ID, "Added URL: "+url)
 	}
 }
@@ -33,36 +35,32 @@ func addHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 func listHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	// userID := update.Message.From.ID
 
-	b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: update.Message.Chat.ID,
-		Text:   "Your feeds: ...",
-	})
+	sendMsg(ctx, b, update.Message.Chat.ID, "Your feeds: ...")
 }
 
 func newsHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
-	b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: update.Message.Chat.ID,
-		Text:   "Loading news...",
-	})
+	sendMsg(ctx, b, update.Message.Chat.ID, "Loading news...")
 }
 
 func removeHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
-	text := update.Message.Text
+	args := extractArgs(update.Message.Text, "/remove")
 
-	if len(text) <= 8 { // "/remove " = 8 chars
-		b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID: update.Message.ID,
-			Text:   "Usage: /remove <url>",
-		})
+	if args == "" {
+		sendMsg(ctx, b, update.Message.Chat.ID, "Usage: /remove <url>")
 		return
 	}
 
-	url := text[5:]
+	urls := splitArgs(args)
 
-	b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID: update.Message.ID,
-		Text:   "Feed " + url + " deleted",
-	})
+	for _, url := range urls {
+		if !isValidURL(url) {
+			sendMsg(ctx, b, update.Message.Chat.ID, "Wrong URL: "+url)
+			continue
+		}
+
+		// remove from storage
+		sendMsg(ctx, b, update.Message.Chat.ID, "Feed "+url+" removed")
+	}
 }
 
 func defaultHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
