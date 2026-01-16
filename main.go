@@ -8,9 +8,13 @@ import (
 	"github.com/go-telegram/bot"
 )
 
+var storage *Storage
+
 func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
+
+	storage = NewStorage()
 
 	opts := []bot.Option{
 		bot.WithDefaultHandler(defaultHandler),

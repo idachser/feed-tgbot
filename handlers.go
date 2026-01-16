@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"fmt"
+	"strings"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -13,53 +15,92 @@ func startHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 func addHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	args := extractArgs(update.Message.Text, "/add")
+	chatID := update.Message.Chat.ID
 
 	if args == "" {
-		sendMsg(ctx, b, update.Message.Chat.ID, "Usage: /add <url>")
+		sendMsg(ctx, b, chatID, "Usage: /add <url>")
 		return
 	}
 
 	urls := splitArgs(args)
+	userID := update.Message.From.ID
 
 	for _, url := range urls {
 		if !isValidURL(url) {
-			sendMsg(ctx, b, update.Message.Chat.ID, "Wrong URL: "+url)
+			sendMsg(ctx, b, chatID, "Wrong URL: "+url)
 			continue
 		}
 
-		// add to storage
-		sendMsg(ctx, b, update.Message.Chat.ID, "Added URL: "+url)
+		err := storage.AddFeed(userID, url)
+		if err != nil {
+			sendMsg(ctx, b, chatID, "Error adding feed: "+url)
+			continue
+		}
+
+		sendMsg(ctx, b, chatID, "Added URL: "+url)
 	}
 }
 
 func listHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
-	// userID := update.Message.From.ID
+	userID := update.Message.From.ID
+	chatID := update.Message.Chat.ID
 
-	sendMsg(ctx, b, update.Message.Chat.ID, "Your feeds: ...")
+	feeds := storage.GetFeeds(userID)
+	if len(feeds) == 0 {
+		sendMsg(ctx, b, chatID, "You have no feeds yet. Use /add <url>")
+		return
+	}
+
+	var sb strings.Builder
+	sb.WriteString("Your feeds:\n\n")
+	for i, feed := range feeds {
+		sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, feed))
+	}
+
+	sendMsg(ctx, b, chatID, sb.String())
 }
 
 func newsHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
-	sendMsg(ctx, b, update.Message.Chat.ID, "Loading news...")
+	userID := update.Message.From.ID
+	chatID := update.Message.Chat.ID
+
+	feeds := storage.GetFeeds(userID)
+	if len(feeds) == 0 {
+		sendMsg(ctx, b, chatID, "You have no feeds yet. Use /add <url>")
+		return
+	}
+
+	sendMsg(ctx, b, chatID, "Loading news...")
+
+	// get news
+	sendMsg(ctx, b, chatID, "Here will be news")
 }
 
 func removeHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	args := extractArgs(update.Message.Text, "/remove")
+	chatID := update.Message.Chat.ID
 
 	if args == "" {
-		sendMsg(ctx, b, update.Message.Chat.ID, "Usage: /remove <url>")
+		sendMsg(ctx, b, chatID, "Usage: /remove <url>")
 		return
 	}
 
 	urls := splitArgs(args)
+	userID := update.Message.From.ID
 
 	for _, url := range urls {
 		if !isValidURL(url) {
-			sendMsg(ctx, b, update.Message.Chat.ID, "Wrong URL: "+url)
+			sendMsg(ctx, b, chatID, "Wrong URL: "+url)
 			continue
 		}
 
-		// remove from storage
-		sendMsg(ctx, b, update.Message.Chat.ID, "Feed "+url+" removed")
+		removed := storage.RemoveFeed(userID, url)
+		if !removed {
+			sendMsg(ctx, b, chatID, "Feed "+url+" not found")
+			continue
+		}
+
+		sendMsg(ctx, b, chatID, "Feed "+url+" removed")
 	}
 }
 
