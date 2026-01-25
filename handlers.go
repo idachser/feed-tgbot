@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/go-telegram/bot"
@@ -53,8 +54,8 @@ func listHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 	var sb strings.Builder
 	sb.WriteString("Your feeds:\n\n")
-	for i, feed := range feeds {
-		sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, feed))
+	for i, url := range feeds {
+		sb.WriteString(fmt.Sprintf("%d. %s\n", i+1, url))
 	}
 
 	sendMsg(ctx, b, chatID, sb.String())
@@ -72,8 +73,57 @@ func newsHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 	sendMsg(ctx, b, chatID, "Loading news...")
 
-	// get news
-	sendMsg(ctx, b, chatID, "Here will be news")
+	var allNews []FeedItem
+
+	for _, url := range feeds {
+		news, err := getFeeds(url)
+		if err != nil {
+			continue
+		}
+		allNews = append(allNews, news...)
+	}
+
+	if len(allNews) == 0 {
+		sendMsg(ctx, b, chatID, "No news found")
+		return
+	}
+
+	sort.Slice(allNews, func(i, j int) bool {
+		if allNews[i].Published == nil {
+			return false
+		}
+		if allNews[j].Published == nil {
+			return true
+		}
+		return allNews[i].Published.After(*allNews[j].Published)
+	})
+
+	limit := 10
+	if len(allNews) < limit {
+		limit = len(allNews)
+	}
+
+	for i := 0; i < limit; i++ {
+		item := allNews[i]
+
+		pubStr := "Unknown date"
+		if item.Published != nil {
+			pubStr = item.Published.Format("2006-01-02 15:04")
+		}
+
+		message := fmt.Sprintf("📰 *%s*\n\n%s\n\n🔗 %s\n📅 %s",
+			item.Title,
+			item.Description,
+			item.Link,
+			pubStr,
+		)
+
+		b.SendMessage(ctx, &bot.SendMessageParams{
+			ChatID:    chatID,
+			Text:      message,
+			ParseMode: models.ParseModeMarkdown,
+		})
+	}
 }
 
 func removeHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
