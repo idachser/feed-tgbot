@@ -2,7 +2,6 @@ package main
 
 import (
 	"errors"
-	"fmt"
 	"time"
 
 	"github.com/mmcdole/gofeed"
@@ -38,30 +37,4 @@ func getFeeds(url string) ([]FeedItem, error) {
 		news = append(news, f)
 	}
 	return news, nil
-}
-
-func scan() {
-	feedURLs := []string{
-		"https://www.golem.de/sonstiges/rss.html",
-		"https://www.wissenschaft.de/feed-wissenschaft",
-	}
-
-	gol, _ := getFeeds(feedURLs[0])
-	wiss, _ := getFeeds(feedURLs[1])
-
-	fmt.Printf("========== Golem.de\n")
-	for _, news := range gol {
-		fmt.Printf("Title: %s\n", news.Title)
-		fmt.Printf("Description: %s\n", news.Description)
-		fmt.Printf("Link: %s\n", news.Link)
-		fmt.Printf("Published: %s\n", news.Published)
-	}
-
-	fmt.Printf("========== Wissenschaft.de\n")
-	for _, news := range wiss {
-		fmt.Printf("Title: %s\n", news.Title)
-		fmt.Printf("Description: %s\n", news.Description)
-		fmt.Printf("Link: %s\n", news.Link)
-		fmt.Printf("Published: %s\n", news.Published)
-	}
 }

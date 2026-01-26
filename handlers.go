@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"log"
 	"sort"
 	"strings"
 
@@ -14,6 +15,7 @@ func startHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	sendMsg(ctx, b, update.Message.Chat.ID, "Hello! I am a bot for RSS feeds.\n\nCommands:\n/add <url> - add a feed\n/list - my feeds\n/news - latest news")
 }
 
+// handler for add RSS
 func addHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	args := extractArgs(update.Message.Text, "/add")
 	chatID := update.Message.Chat.ID
@@ -42,6 +44,7 @@ func addHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 }
 
+// handler for get list of RSS
 func listHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	userID := update.Message.From.ID
 	chatID := update.Message.Chat.ID
@@ -61,6 +64,7 @@ func listHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	sendMsg(ctx, b, chatID, sb.String())
 }
 
+// handler for get last 10 news from RSS
 func newsHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	userID := update.Message.From.ID
 	chatID := update.Message.Chat.ID
@@ -76,12 +80,20 @@ func newsHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	var allNews []FeedItem
 
 	for _, url := range feeds {
+
+		log.Printf("fetching: %s", url)
+
 		news, err := getFeeds(url)
 		if err != nil {
+
+			log.Printf("error: %v", err)
+
 			continue
 		}
 		allNews = append(allNews, news...)
 	}
+
+	log.Printf("total news fetched = %d", len(allNews))
 
 	if len(allNews) == 0 {
 		sendMsg(ctx, b, chatID, "No news found")
@@ -106,6 +118,8 @@ func newsHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	for i := 0; i < limit; i++ {
 		item := allNews[i]
 
+		log.Printf("item: %s", item.Title)
+
 		pubStr := "Unknown date"
 		if item.Published != nil {
 			pubStr = item.Published.Format("2006-01-02 15:04")
@@ -118,14 +132,16 @@ func newsHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 			pubStr,
 		)
 
+		log.Printf("message: %s", message)
+
 		b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID:    chatID,
-			Text:      message,
-			ParseMode: models.ParseModeMarkdown,
+			ChatID: chatID,
+			Text:   message,
 		})
 	}
 }
 
+// remove RSS
 func removeHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	args := extractArgs(update.Message.Text, "/remove")
 	chatID := update.Message.Chat.ID
@@ -154,6 +170,7 @@ func removeHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 }
 
+// send message with help instructions
 func defaultHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	sendMsg(ctx, b, update.Message.Chat.ID, "/start - greeting\n/add <url> - add feed\n/list - show my feeds\n/news - gvet the latest 10 news items from all feeds\n/remove <url> - remove feed")
 }
