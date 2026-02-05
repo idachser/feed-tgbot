@@ -38,3 +38,24 @@ func getFeeds(url string) ([]FeedItem, error) {
 	}
 	return news, nil
 }
+
+func getNewItems(feedURL, lastItemLink string) ([]FeedItem, error) {
+	allItems, err := getFeeds(feedURL)
+	if err != nil {
+		return nil, err
+	}
+
+	if lastItemLink == "" {
+		return allItems, nil
+	}
+
+	var newItems []FeedItem
+	for _, item := range allItems {
+		if item.Link == lastItemLink {
+			break
+		}
+		newItems = append(newItems, item)
+	}
+
+	return newItems, nil
+}
