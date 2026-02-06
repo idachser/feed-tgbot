@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"os/signal"
+	"time"
 
 	"github.com/go-telegram/bot"
 )
@@ -30,6 +31,8 @@ func main() {
 	b.RegisterHandler(bot.HandlerTypeMessageText, "/list", bot.MatchTypeExact, listHandler)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "/news", bot.MatchTypeExact, newsHandler)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "/remove", bot.MatchTypePrefix, removeHandler)
+
+	go startScheduler(ctx, b, 30*time.Minute)
 
 	b.Start(ctx)
 }
