@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"log"
 	"os"
 	"os/signal"
 	"time"
@@ -15,7 +16,12 @@ func main() {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
 	defer cancel()
 
-	storage = NewStorage()
+	if err := InitDB("bot.db"); err != nil {
+		log.Fatalf("failed to initialize database: %v", err)
+	}
+	defer CloseDB()
+
+	storage = NewStorage(DB)
 
 	opts := []bot.Option{
 		bot.WithDefaultHandler(defaultHandler),

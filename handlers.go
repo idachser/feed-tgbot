@@ -36,6 +36,7 @@ func addHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 		err := storage.AddFeed(userID, url)
 		if err != nil {
+			log.Printf("error adding feed: %v", err)
 			sendMsg(ctx, b, chatID, "Error adding feed: "+url)
 			continue
 		}
@@ -44,12 +45,18 @@ func addHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 }
 
-// handler for get list of RSS
+// handler for get list of RSS subscripted URLs
 func listHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	userID := update.Message.From.ID
 	chatID := update.Message.Chat.ID
 
-	feeds := storage.GetFeeds(userID)
+	feeds, err := storage.GetFeeds(userID)
+	if err != nil {
+		log.Printf("error getting feeds: %v", err)
+		sendMsg(ctx, b, chatID, "Error loading feeds.")
+		return
+	}
+
 	if len(feeds) == 0 {
 		sendMsg(ctx, b, chatID, "You have no feeds yet. Use /add <url>")
 		return
@@ -69,7 +76,13 @@ func newsHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	userID := update.Message.From.ID
 	chatID := update.Message.Chat.ID
 
-	feeds := storage.GetFeeds(userID)
+	feeds, err := storage.GetFeeds(userID)
+	if err != nil {
+		log.Printf("error getting feeds: %v", err)
+		sendMsg(ctx, b, chatID, "Error loading feeds.")
+		return
+	}
+
 	if len(feeds) == 0 {
 		sendMsg(ctx, b, chatID, "You have no feeds yet. Use /add <url>")
 		return
@@ -80,13 +93,10 @@ func newsHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	var allNews []FeedItem
 
 	for _, url := range feeds {
-
-		log.Printf("fetching: %s", url)
-
 		news, err := getFeeds(url)
 		if err != nil {
 
-			log.Printf("error: %v", err)
+			log.Printf("error fetching feed %s: %v", url, err)
 
 			continue
 		}
@@ -96,7 +106,7 @@ func newsHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	log.Printf("total news fetched = %d", len(allNews))
 
 	if len(allNews) == 0 {
-		sendMsg(ctx, b, chatID, "No news found")
+		sendMsg(ctx, b, chatID, "No news found.")
 		return
 	}
 
@@ -160,13 +170,19 @@ func removeHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 			continue
 		}
 
-		removed := storage.RemoveFeed(userID, url)
-		if !removed {
-			sendMsg(ctx, b, chatID, "Feed "+url+" not found")
+		removed, err := storage.RemoveFeed(userID, url)
+		if err != nil {
+			log.Printf("error removing feed %s: %v", url, err)
+			sendMsg(ctx, b, chatID, "Error removing feed.")
 			continue
 		}
 
-		sendMsg(ctx, b, chatID, "Feed "+url+" removed")
+		if !removed {
+			sendMsg(ctx, b, chatID, "Feed "+url+" not found.")
+			continue
+		}
+
+		sendMsg(ctx, b, chatID, "Feed "+url+" removed.")
 	}
 }
 

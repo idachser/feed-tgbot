@@ -32,13 +32,25 @@ func startScheduler(ctx context.Context, b *bot.Bot, interval time.Duration) {
 func checkAndSendNews(ctx context.Context, b *bot.Bot) {
 	log.Println("check feeds for all users...")
 
-	users := storage.GetAllUsers()
+	users, err := storage.GetAllUsers()
+	if err != nil {
+		log.Printf("error getting users: %v", err)
+		return
+	}
 
 	for _, userID := range users {
-		feeds := storage.GetFeeds(userID)
+		feeds, err := storage.GetFeeds(userID)
+		if err != nil {
+			log.Printf("error getting urls of feeds for user %d: %v", userID, err)
+			continue
+		}
 
 		for _, feedURL := range feeds {
-			lastSent := storage.GetLastSent(userID, feedURL)
+			lastSent, err := storage.GetLastSent(userID, feedURL)
+			if err != nil {
+				log.Printf("error getting last sent for user %d: %v", userID, err)
+				continue
+			}
 
 			newItems, err := getNewItems(feedURL, lastSent)
 			if err != nil {
@@ -73,6 +85,10 @@ func sendNewsToUser(ctx context.Context, b *bot.Bot, userID int64, feedURL strin
 			continue
 		}
 
-		storage.SetLastSent(userID, feedURL, item.Link)
+		err = storage.SetLastSent(userID, feedURL, item.Link)
+		if err != nil {
+			log.Printf("error setting last sent: %v", err)
+		}
 	}
+	log.Printf("sent %d news items to user %d from %s", len(items), userID, feedURL)
 }

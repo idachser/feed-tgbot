@@ -1,93 +1,127 @@
 package main
 
 import (
-	"sync"
+	"database/sql"
+	"fmt"
 )
 
 type Storage struct {
-	mu           sync.RWMutex
-	subscription map[int64][]string
-	lastSent     map[int64]map[string]string
+	db *sql.DB
 }
 
-func NewStorage() *Storage {
-	return &Storage{
-		subscription: make(map[int64][]string),
-		lastSent:     make(map[int64]map[string]string),
-	}
+func NewStorage(db *sql.DB) *Storage {
+	return &Storage{db: db}
 }
 
 func (s *Storage) AddFeed(userID int64, feedURL string) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+	query := `INSERT INTO subscriptions (user_id, feed_url) VALUES (?, ?)`
 
-	feeds := s.subscription[userID]
-	for _, url := range feeds {
-		if url == feedURL {
+	_, err := s.db.Exec(query, userID, feedURL)
+	if err != nil {
+		if err.Error() == "UNIQUE constraint failed: subscriptions.user_id, subscriptions.feed_url" {
 			return nil
 		}
+		return fmt.Errorf("failed to add feed: %w", err)
 	}
 
-	s.subscription[userID] = append(feeds, feedURL)
 	return nil
 }
 
-func (s *Storage) RemoveFeed(userID int64, feedURL string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
+func (s *Storage) RemoveFeed(userID int64, feedURL string) (bool, error) {
+	query := `DELETE FROM subscriptions WHERE user_id = ? AND feed_url = ?`
 
-	feeds := s.subscription[userID]
-	for i, url := range feeds {
-		if url == feedURL {
-			s.subscription[userID] = append(feeds[:i], feeds[i+1:]...)
-			return true
-		}
+	result, err := s.db.Exec(query, userID, feedURL)
+	if err != nil {
+		return false, fmt.Errorf("failed to remove feed: %w", err)
 	}
 
-	return false
+	rowsAffected, err := result.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("failed to get rows affected: %w", err)
+	}
+
+	return rowsAffected > 0, nil
 }
 
-func (s *Storage) GetFeeds(userID int64) []string {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+func (s *Storage) GetFeeds(userID int64) ([]string, error) {
+	query := `SELECT feed_url FROM subscriptions WHERE user_id = ? ORDER BY created_at DESC`
 
-	feeds := s.subscription[userID]
-	result := make([]string, len(feeds))
-	copy(result, feeds)
+	rows, err := s.db.Query(query, userID)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get feeds: %w", err)
+	}
+	defer rows.Close()
 
-	return result
+	var feeds []string
+	for rows.Next() {
+		var feedURL string
+		if err := rows.Scan(&feedURL); err != nil {
+			return nil, fmt.Errorf("failed to scan feed: %w", err)
+		}
+		feeds = append(feeds, feedURL)
+	}
+
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating feeds: %w", err)
+	}
+
+	return feeds, nil
 }
 
-func (s *Storage) GetAllUsers() []int64 {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
+func (s *Storage) GetAllUsers() ([]int64, error) {
+	query := `SELECT DISTINCT user_id FROM subscriptions`
 
-	users := make([]int64, len(s.subscription))
-	for userID := range s.subscription {
+	rows, err := s.db.Query(query)
+	if err != nil {
+		return nil, fmt.Errorf("failed to get users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []int64
+	for rows.Next() {
+		var userID int64
+		if err := rows.Scan(&userID); err != nil {
+			return nil, fmt.Errorf("failed to scan user: %w", err)
+		}
 		users = append(users, userID)
 	}
 
-	return users
-}
-
-func (s *Storage) SetLastSent(userID int64, feedURL string, itemLink string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-
-	if s.lastSent[userID] == nil {
-		s.lastSent[userID] = make(map[string]string)
+	if err = rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating users: %w", err)
 	}
 
-	s.lastSent[userID][feedURL] = itemLink
+	return users, nil
 }
 
-func (s *Storage) GetLastSent(userID int64, feedURL string) string {
-	s.mu.RLocker()
-	defer s.mu.Unlock()
+func (s *Storage) SetLastSent(userID int64, feedURL string, itemLink string) error {
+	query := `
+	INSERT INTO last_sent (user_id, feed_url, item_link) 
+	VALUES (?, ?, ?)
+	ON CONFLICT(user_id, feed_url) 
+	DO UPDATE SET item_link = ?, sent_at = CURRENT_TIMESTAMP
+	`
 
-	if userFeeds, ok := s.lastSent[userID]; ok {
-		return userFeeds[feedURL]
+	_, err := s.db.Exec(query, userID, feedURL, itemLink, itemLink)
+	if err != nil {
+		return fmt.Errorf("failed to set last sent: %w", err)
 	}
 
-	return ""
+	return nil
+}
+
+func (s *Storage) GetLastSent(userID int64, feedURL string) (string, error) {
+	query := `SELECT item_link FROM last_sent WHERE user_id = ? AND feed_url = ?`
+
+	var itemLink string
+	err := s.db.QueryRow(query, userID, feedURL).Scan(&itemLink)
+
+	if err == sql.ErrNoRows {
+		return "", nil
+	}
+
+	if err != nil {
+		return "", fmt.Errorf("failed to get last sent: %w", err)
+	}
+
+	return itemLink, nil
 }
