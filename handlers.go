@@ -30,19 +30,138 @@ func addHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 	for _, url := range urls {
 		if !isValidURL(url) {
-			sendMsg(ctx, b, chatID, "Wrong URL: "+url)
+			sendMsg(ctx, b, chatID, "❌ Wrong URL: "+url)
 			continue
 		}
 
-		err := storage.AddFeed(userID, url)
+		_, err := getFeeds(url)
+		if err == nil {
+			err := storage.AddFeed(userID, url)
+			if err != nil {
+				log.Printf("error adding feed: %v", err)
+				sendMsg(ctx, b, chatID, "❌ Error adding feed: "+url)
+				continue
+			}
+
+			sendMsg(ctx, b, chatID, "✅ Added URL: "+url)
+			continue
+		}
+
+		log.Printf("Not a direct feed, discovering feeds on %s", url)
+		feeds, err := DiscoverFeeds(url)
 		if err != nil {
-			log.Printf("error adding feed: %v", err)
-			sendMsg(ctx, b, chatID, "Error adding feed: "+url)
+			log.Printf("Error discovering feeds: %v", err)
+			sendMsg(ctx, b, chatID, "❌ Could not find feeds on this page")
 			continue
 		}
 
-		sendMsg(ctx, b, chatID, "Added URL: "+url)
+		if len(feeds) == 0 {
+			sendMsg(ctx, b, chatID, "❌ No RSS/Atom feeds found on this page")
+			continue
+		}
+
+		showFeedSelection(ctx, b, chatID, userID, feeds)
 	}
+}
+
+// handler for showing inline keyboard feed selection
+var pendingFeeds = make(map[int64][]DiscoveredFeed)
+
+func showFeedSelection(ctx context.Context, b *bot.Bot, chatID, userID int64, feeds []DiscoveredFeed) {
+	if len(feeds) == 1 {
+		feed := feeds[0]
+		err := storage.AddFeed(userID, feed.URL)
+		if err != nil {
+			log.Printf("Error adding feed: %v", err)
+			sendMsg(ctx, b, chatID, "❌ Error adding feed")
+			return
+		}
+		sendMsg(ctx, b, chatID, fmt.Sprintf("✅ Added: %s\n🔗 %s", feed.Title, feed.URL))
+		return
+	}
+
+	var buttons [][]models.InlineKeyboardButton
+
+	for i, feed := range feeds {
+		callbackData := fmt.Sprintf("add_feed:%d:%d", userID, i)
+
+		button := models.InlineKeyboardButton{
+			Text:         fmt.Sprintf("%s (%s)", feed.Title, feed.Type),
+			CallbackData: callbackData,
+		}
+
+		buttons = append(buttons, []models.InlineKeyboardButton{button})
+	}
+
+	keyboard := models.InlineKeyboardMarkup{
+		InlineKeyboard: buttons,
+	}
+
+	pendingFeeds[userID] = feeds
+
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:      chatID,
+		Text:        fmt.Sprintf("Found %d feeds. Choose one:", len(feeds)),
+		ReplyMarkup: keyboard,
+	})
+}
+
+func callbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	callback := update.CallbackQuery
+
+	parts := strings.Split(callback.Data, ":")
+	if len(parts) != 3 || parts[0] != "add_feed" {
+		return
+	}
+
+	var userID, feedIndex int
+	fmt.Sscanf(parts[1], "%d", &userID)
+	fmt.Sscanf(parts[2], "%d", &feedIndex)
+
+	if int64(userID) != callback.From.ID {
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: callback.ID,
+			Text:            "This button is not for you",
+			ShowAlert:       true,
+		})
+		return
+	}
+
+	feeds, ok := pendingFeeds[int64(userID)]
+	if !ok || feedIndex >= len(feeds) {
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: callback.ID,
+			Text:            "Feed selection expired. Try /add again",
+			ShowAlert:       true,
+		})
+		return
+	}
+
+	selectedFeed := feeds[feedIndex]
+
+	err := storage.AddFeed(int64(userID), selectedFeed.URL)
+	if err != nil {
+		log.Printf("Error adding feed: %v", err)
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: callback.ID,
+			Text:            "Error adding feed",
+			ShowAlert:       true,
+		})
+		return
+	}
+
+	delete(pendingFeeds, int64(userID))
+
+	b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+		CallbackQueryID: callback.ID,
+		Text:            "✅ Feed added!",
+	})
+
+	b.EditMessageText(ctx, &bot.EditMessageTextParams{
+		ChatID:    callback.Message.Message.Chat.ID,
+		MessageID: callback.Message.Message.ID,
+		Text:      fmt.Sprintf("✅ Added: %s\n🔗 %s", selectedFeed.Title, selectedFeed.URL),
+	})
 }
 
 // handler for get list of RSS subscripted URLs
