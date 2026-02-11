@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"net/http"
 	"net/url"
@@ -16,12 +17,22 @@ type DiscoveredFeed struct {
 	Type  string // rss or atom
 }
 
+const discoveryRequestTimeout = 10 * time.Second
+
 func DiscoverFeeds(pageURL string) ([]DiscoveredFeed, error) {
-	client := &http.Client{
-		Timeout: 10 * time.Second,
+	return DiscoverFeedsWithContext(context.Background(), pageURL)
+}
+
+func DiscoverFeedsWithContext(parentCtx context.Context, pageURL string) ([]DiscoveredFeed, error) {
+	ctx, cancel := context.WithTimeout(parentCtx, discoveryRequestTimeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, pageURL, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create discovery request: %w", err)
 	}
 
-	res, err := client.Get(pageURL)
+	res, err := http.DefaultClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("failed to fetch page: %w", err)
 	}

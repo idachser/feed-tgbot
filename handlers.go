@@ -6,6 +6,7 @@ import (
 	"log"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -34,7 +35,7 @@ func addHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 			continue
 		}
 
-		_, err := getFeeds(url)
+		_, err := getFeedsWithContext(ctx, url)
 		if err == nil {
 			err := storage.AddFeed(userID, url)
 			if err != nil {
@@ -48,7 +49,7 @@ func addHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 		}
 
 		log.Printf("Not a direct feed, discovering feeds on %s", url)
-		feeds, err := DiscoverFeeds(url)
+		feeds, err := DiscoverFeedsWithContext(ctx, url)
 		if err != nil {
 			log.Printf("Error discovering feeds: %v", err)
 			sendMsg(ctx, b, chatID, "❌ Could not find feeds on this page")
@@ -65,7 +66,7 @@ func addHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 }
 
 // handler for showing inline keyboard feed selection
-var pendingFeeds = make(map[int64][]DiscoveredFeed)
+const pendingSelectionMaxAge = 15 * time.Minute
 
 func showFeedSelection(ctx context.Context, b *bot.Bot, chatID, userID int64, feeds []DiscoveredFeed) {
 	if len(feeds) == 1 {
@@ -97,7 +98,11 @@ func showFeedSelection(ctx context.Context, b *bot.Bot, chatID, userID int64, fe
 		InlineKeyboard: buttons,
 	}
 
-	pendingFeeds[userID] = feeds
+	if err := storage.SetPendingFeeds(userID, feeds); err != nil {
+		log.Printf("Error saving pending feeds: %v", err)
+		sendMsg(ctx, b, chatID, "❌ Error preparing feed selection")
+		return
+	}
 
 	b.SendMessage(ctx, &bot.SendMessageParams{
 		ChatID:      chatID,
@@ -127,7 +132,16 @@ func callbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 
-	feeds, ok := pendingFeeds[int64(userID)]
+	feeds, ok, err := storage.GetPendingFeeds(int64(userID), pendingSelectionMaxAge)
+	if err != nil {
+		log.Printf("Error loading pending feeds: %v", err)
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: callback.ID,
+			Text:            "Error loading selection. Try /add again",
+			ShowAlert:       true,
+		})
+		return
+	}
 	if !ok || feedIndex >= len(feeds) {
 		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
 			CallbackQueryID: callback.ID,
@@ -139,7 +153,7 @@ func callbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 	selectedFeed := feeds[feedIndex]
 
-	err := storage.AddFeed(int64(userID), selectedFeed.URL)
+	err = storage.AddFeed(int64(userID), selectedFeed.URL)
 	if err != nil {
 		log.Printf("Error adding feed: %v", err)
 		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
@@ -150,7 +164,9 @@ func callbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 
-	delete(pendingFeeds, int64(userID))
+	if err := storage.DeletePendingFeeds(int64(userID)); err != nil {
+		log.Printf("Error deleting pending feeds: %v", err)
+	}
 
 	b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
 		CallbackQueryID: callback.ID,
@@ -212,7 +228,7 @@ func newsHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	var allNews []FeedItem
 
 	for _, url := range feeds {
-		news, err := getFeeds(url)
+		news, err := getFeedsWithContext(ctx, url)
 		if err != nil {
 
 			log.Printf("error fetching feed %s: %v", url, err)

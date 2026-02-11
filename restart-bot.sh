@@ -40,7 +40,7 @@ fi
 
 # Show logs
 echo -e "${YELLOW}Recent logs:${NC}"
-docker compose logs --tail=20 telegram-bot
+docker compose logs --tail=20 bot
 
 echo -e "\n${GREEN}=== Bot restarted successfully ===${NC}"
 echo -e "${YELLOW}Run 'docker compose logs -f' to follow logs${NC}"

@@ -52,7 +52,7 @@ func checkAndSendNews(ctx context.Context, b *bot.Bot) {
 				continue
 			}
 
-			newItems, err := getNewItems(feedURL, lastSent)
+			newItems, err := getNewItemsWithContext(ctx, feedURL, lastSent)
 			if err != nil {
 				log.Printf("error fetching feed %s: %v", feedURL, err)
 				continue

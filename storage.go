@@ -2,7 +2,9 @@ package main
 
 import (
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"time"
 )
 
 type Storage struct {
@@ -121,4 +123,63 @@ func (s *Storage) GetLastSent(userID int64, feedURL string) (string, error) {
 	}
 
 	return itemLink, nil
+}
+
+func (s *Storage) SetPendingFeeds(userID int64, feeds []DiscoveredFeed) error {
+	feedsJSON, err := json.Marshal(feeds)
+	if err != nil {
+		return fmt.Errorf("failed to marshal pending feeds: %w", err)
+	}
+
+	query := `
+	INSERT INTO pending_feed_selections (user_id, feeds_json, created_unix)
+	VALUES (?, ?, strftime('%s','now'))
+	ON CONFLICT(user_id)
+	DO UPDATE SET feeds_json = excluded.feeds_json, created_unix = strftime('%s','now')
+	`
+
+	_, err = s.db.Exec(query, userID, string(feedsJSON))
+	if err != nil {
+		return fmt.Errorf("failed to set pending feeds: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Storage) GetPendingFeeds(userID int64, maxAge time.Duration) ([]DiscoveredFeed, bool, error) {
+	query := `SELECT feeds_json, created_unix FROM pending_feed_selections WHERE user_id = ?`
+
+	var feedsJSON string
+	var createdUnix int64
+	err := s.db.QueryRow(query, userID).Scan(&feedsJSON, &createdUnix)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to get pending feeds: %w", err)
+	}
+
+	if maxAge > 0 && time.Now().Unix()-createdUnix > int64(maxAge.Seconds()) {
+		if delErr := s.DeletePendingFeeds(userID); delErr != nil {
+			return nil, false, fmt.Errorf("failed to cleanup expired pending feeds: %w", delErr)
+		}
+		return nil, false, nil
+	}
+
+	var feeds []DiscoveredFeed
+	if err := json.Unmarshal([]byte(feedsJSON), &feeds); err != nil {
+		return nil, false, fmt.Errorf("failed to unmarshal pending feeds: %w", err)
+	}
+
+	return feeds, true, nil
+}
+
+func (s *Storage) DeletePendingFeeds(userID int64) error {
+	query := `DELETE FROM pending_feed_selections WHERE user_id = ?`
+
+	if _, err := s.db.Exec(query, userID); err != nil {
+		return fmt.Errorf("failed to delete pending feeds: %w", err)
+	}
+
+	return nil
 }

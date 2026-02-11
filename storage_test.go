@@ -3,6 +3,7 @@ package main
 import (
 	"database/sql"
 	"testing"
+	"time"
 )
 
 func setupTestDB(t *testing.T) *sql.DB {
@@ -29,6 +30,12 @@ func setupTestDB(t *testing.T) *sql.DB {
 		item_link TEXT NOT NULL,
 		sent_at DATETIME DEFAULT CURRENT_TIMESTAMP,
 		UNIQUE(user_id, feed_url)
+	);
+
+	CREATE TABLE pending_feed_selections (
+		user_id INTEGER PRIMARY KEY,
+		feeds_json TEXT NOT NULL,
+		created_unix INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 	);
 
 	CREATE INDEX idx_subscriptions_user_id ON subscriptions(user_id);
@@ -225,5 +232,74 @@ func TestStorage_LastSent(t *testing.T) {
 
 	if lastSent != itemLink2 {
 		t.Errorf("expected %q, got %q", itemLink2, lastSent)
+	}
+}
+
+func TestStorage_PendingFeeds(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	storage := NewStorage(db)
+	userID := int64(123)
+
+	feeds := []DiscoveredFeed{
+		{Title: "RSS Feed", URL: "https://example.com/feed.rss", Type: "RSS"},
+		{Title: "Atom Feed", URL: "https://example.com/atom.xml", Type: "Atom"},
+	}
+
+	if err := storage.SetPendingFeeds(userID, feeds); err != nil {
+		t.Fatalf("SetPendingFeeds failed: %v", err)
+	}
+
+	gotFeeds, ok, err := storage.GetPendingFeeds(userID, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("GetPendingFeeds failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected pending feeds to exist")
+	}
+	if len(gotFeeds) != len(feeds) {
+		t.Fatalf("expected %d feeds, got %d", len(feeds), len(gotFeeds))
+	}
+
+	if err := storage.DeletePendingFeeds(userID); err != nil {
+		t.Fatalf("DeletePendingFeeds failed: %v", err)
+	}
+
+	_, ok, err = storage.GetPendingFeeds(userID, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("GetPendingFeeds after delete failed: %v", err)
+	}
+	if ok {
+		t.Fatal("expected no pending feeds after delete")
+	}
+}
+
+func TestStorage_PendingFeeds_Expires(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	storage := NewStorage(db)
+	userID := int64(123)
+
+	feeds := []DiscoveredFeed{
+		{Title: "RSS Feed", URL: "https://example.com/feed.rss", Type: "RSS"},
+	}
+
+	if err := storage.SetPendingFeeds(userID, feeds); err != nil {
+		t.Fatalf("SetPendingFeeds failed: %v", err)
+	}
+
+	_, err := db.Exec(`UPDATE pending_feed_selections SET created_unix = strftime('%s','now') - 3600 WHERE user_id = ?`, userID)
+	if err != nil {
+		t.Fatalf("failed to age pending selection: %v", err)
+	}
+
+	_, ok, err := storage.GetPendingFeeds(userID, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("GetPendingFeeds failed: %v", err)
+	}
+	if ok {
+		t.Fatal("expected pending feeds to be expired")
 	}
 }

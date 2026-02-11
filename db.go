@@ -49,6 +49,12 @@ func createTables() error {
 		UNIQUE(user_id, feed_url)
 	);
 
+	CREATE TABLE IF NOT EXISTS pending_feed_selections (
+		user_id INTEGER PRIMARY KEY,
+		feeds_json TEXT NOT NULL,
+		created_unix INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id ON subscriptions(user_id);
 	CREATE INDEX IF NOT EXISTS idx_last_sent_user_id ON last_sent(user_id);
 	`
