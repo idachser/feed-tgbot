@@ -14,13 +14,10 @@ func NewStorage(db *sql.DB) *Storage {
 }
 
 func (s *Storage) AddFeed(userID int64, feedURL string) error {
-	query := `INSERT INTO subscriptions (user_id, feed_url) VALUES (?, ?)`
+	query := `INSERT OR IGNORE INTO subscriptions (user_id, feed_url) VALUES (?, ?)`
 
 	_, err := s.db.Exec(query, userID, feedURL)
 	if err != nil {
-		if err.Error() == "UNIQUE constraint failed: subscriptions.user_id, subscriptions.feed_url" {
-			return nil
-		}
 		return fmt.Errorf("failed to add feed: %w", err)
 	}
 
