@@ -33,9 +33,13 @@ func main() {
 	}
 
 	b.RegisterHandler(bot.HandlerTypeMessageText, "/start", bot.MatchTypeExact, startHandler)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "/help", bot.MatchTypeExact, helpHandler)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "Help", bot.MatchTypeExact, helpHandler)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "/add", bot.MatchTypePrefix, addHandler)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "/list", bot.MatchTypeExact, listHandler)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "List", bot.MatchTypeExact, listHandler)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "/news", bot.MatchTypeExact, newsHandler)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "News", bot.MatchTypeExact, newsHandler)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "/remove", bot.MatchTypePrefix, removeHandler)
 
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "", bot.MatchTypePrefix, callbackHandler)

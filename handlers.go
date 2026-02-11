@@ -12,8 +12,14 @@ import (
 	"github.com/go-telegram/bot/models"
 )
 
+const helpText = "/start - greeting\n/add <url> - add feed\n/list - show my feeds\n/news - get the latest 10 news items from all feeds\n/remove <url> - remove feed\n/help - show help"
+
 func startHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
-	sendMsg(ctx, b, update.Message.Chat.ID, "Hello! I am a bot for RSS feeds.\n\nCommands:\n/add <url> - add a feed\n/list - my feeds\n/news - latest news")
+	sendMsgWithKeyboard(ctx, b, update.Message.Chat.ID, "Hello! I am a bot for RSS feeds.\n\nCommands:\n"+helpText)
+}
+
+func helpHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	sendMsgWithKeyboard(ctx, b, update.Message.Chat.ID, helpText)
 }
 
 // handler for add RSS
@@ -323,7 +329,32 @@ func removeHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 // send message with help instructions
 func defaultHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
-	sendMsg(ctx, b, update.Message.Chat.ID, "/start - greeting\n/add <url> - add feed\n/list - show my feeds\n/news - gvet the latest 10 news items from all feeds\n/remove <url> - remove feed")
+	sendMsg(ctx, b, update.Message.Chat.ID, helpText)
+}
+
+func commandReplyKeyboard() models.ReplyKeyboardMarkup {
+	return models.ReplyKeyboardMarkup{
+		Keyboard: [][]models.KeyboardButton{
+			{
+				{Text: "News"},
+				{Text: "List"},
+			},
+			{
+				{Text: "Help"},
+			},
+		},
+		ResizeKeyboard:  true,
+		OneTimeKeyboard: false,
+	}
+}
+
+func sendMsgWithKeyboard(ctx context.Context, b *bot.Bot, chatID int64, text string) {
+	keyboard := commandReplyKeyboard()
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:      chatID,
+		Text:        text,
+		ReplyMarkup: keyboard,
+	})
 }
 
 func sendMsg(ctx context.Context, b *bot.Bot, chatID int64, text string) {
