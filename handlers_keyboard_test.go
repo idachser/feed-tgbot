@@ -44,17 +44,21 @@ func TestCommandReplyKeyboard(t *testing.T) {
 		t.Fatalf("expected fourth button to be List, got %q", keyboard.Keyboard[1][1].Text)
 	}
 
-	if len(keyboard.Keyboard[2]) != 1 {
-		t.Fatalf("expected third row to have 1 button, got %d", len(keyboard.Keyboard[2]))
+	if len(keyboard.Keyboard[2]) != 2 {
+		t.Fatalf("expected third row to have 2 buttons, got %d", len(keyboard.Keyboard[2]))
 	}
 
 	if keyboard.Keyboard[2][0].Text != "Help" {
 		t.Fatalf("expected fifth button to be Help, got %q", keyboard.Keyboard[2][0].Text)
 	}
+
+	if keyboard.Keyboard[2][1].Text != "Updates" {
+		t.Fatalf("expected sixth button to be Updates, got %q", keyboard.Keyboard[2][1].Text)
+	}
 }
 
 func TestHelpTextIncludesCoreCommands(t *testing.T) {
-	required := []string{"/add", "/list", "/news", "/remove", "/help"}
+	required := []string{"/add", "/list", "/news", "/remove", "/updates", "/help"}
 
 	for _, command := range required {
 		if !strings.Contains(helpText, command) {

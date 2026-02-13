@@ -30,18 +30,48 @@ func startScheduler(ctx context.Context, b *bot.Bot, interval time.Duration) {
 }
 
 func checkAndSendNews(ctx context.Context, b *bot.Bot) {
-	log.Println("check feeds for all users...")
+	log.Println("check due users for automatic updates...")
 
 	users, err := storage.GetAllUsers()
 	if err != nil {
 		log.Printf("error getting users: %v", err)
 		return
 	}
-
 	for _, userID := range users {
+		if err := storage.EnsureUserUpdateSettings(userID); err != nil {
+			log.Printf("error ensuring update settings for user %d: %v", userID, err)
+		}
+	}
+
+	nowUnix := time.Now().Unix()
+	dueUsers, err := storage.ListDueUsers(nowUnix)
+	if err != nil {
+		log.Printf("error getting due users: %v", err)
+		return
+	}
+
+	for _, userID := range dueUsers {
+		settings, err := storage.GetUserUpdateSettings(userID)
+		if err != nil {
+			log.Printf("error loading update settings for user %d: %v", userID, err)
+			continue
+		}
+		if !settings.Enabled {
+			continue
+		}
+
+		nextCheckUnix := time.Now().Unix() + int64(settings.IntervalMinutes*60)
+		if err := storage.SetNextCheckUnix(userID, nextCheckUnix); err != nil {
+			log.Printf("error setting next check for user %d: %v", userID, err)
+			continue
+		}
+
 		feeds, err := storage.GetFeeds(userID)
 		if err != nil {
 			log.Printf("error getting urls of feeds for user %d: %v", userID, err)
+			continue
+		}
+		if len(feeds) == 0 {
 			continue
 		}
 
@@ -69,10 +99,12 @@ func checkAndSendNews(ctx context.Context, b *bot.Bot) {
 
 func sendNewsToUser(ctx context.Context, b *bot.Bot, userID int64, feedURL string, items []FeedItem) {
 	for _, item := range items {
+		cleanTitle := cleanFeedTitle(item.Title)
+		cleanDescription := cleanFeedDescription(item.Description)
 		message := fmt.Sprintf("🆕 *New from %s*\n\n📰 *%s*\n\n%s\n\n🔗 %s",
 			feedURL,
-			item.Title,
-			item.Description,
+			cleanTitle,
+			cleanDescription,
 			item.Link,
 		)
 

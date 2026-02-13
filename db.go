@@ -67,8 +67,17 @@ func createTables() error {
 		created_unix INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 	);
 
+	CREATE TABLE IF NOT EXISTS user_update_settings (
+		user_id INTEGER PRIMARY KEY,
+		enabled INTEGER NOT NULL DEFAULT 1,
+		interval_minutes INTEGER NOT NULL DEFAULT 30,
+		next_check_unix INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
 	CREATE INDEX IF NOT EXISTS idx_subscriptions_user_id ON subscriptions(user_id);
 	CREATE INDEX IF NOT EXISTS idx_last_sent_user_id ON last_sent(user_id);
+	CREATE INDEX IF NOT EXISTS idx_user_update_settings_due ON user_update_settings(enabled, next_check_unix);
 	`
 
 	_, err := DB.Exec(schema)

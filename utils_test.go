@@ -188,3 +188,102 @@ func TestTruncate(t *testing.T) {
 		})
 	}
 }
+
+func TestSanitizeFeedText(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "strips html tags and decodes entities",
+			input:    "<p>Hello <b>world</b> &amp; team</p>",
+			expected: "Hello world & team",
+		},
+		{
+			name:     "removes script and style blocks",
+			input:    `<style>.x{color:red}</style><script>alert("x")</script><div>Safe text</div>`,
+			expected: "Safe text",
+		},
+		{
+			name:     "normalizes whitespace and non breaking spaces",
+			input:    "Line1&nbsp;&nbsp;\n\tLine2   Line3",
+			expected: "Line1 Line2 Line3",
+		},
+		{
+			name:     "handles malformed html fragments",
+			input:    "<p>One<div>Two</p>Three",
+			expected: "One Two Three",
+		},
+		{
+			name:     "html only becomes empty",
+			input:    "<p><br/></p>",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sanitizeFeedText(tt.input)
+			if got != tt.expected {
+				t.Errorf("sanitizeFeedText(%q) = %q; want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestCleanFeedTitle(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "uses cleaned title when available",
+			input:    "Tom &amp; Jerry",
+			expected: "Tom & Jerry",
+		},
+		{
+			name:     "falls back when empty",
+			input:    "<p><br/></p>",
+			expected: "Untitled",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := cleanFeedTitle(tt.input)
+			if got != tt.expected {
+				t.Errorf("cleanFeedTitle(%q) = %q; want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestCleanFeedDescription(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "uses cleaned description when available",
+			input:    "<div>Summary &amp; details</div>",
+			expected: "Summary & details",
+		},
+		{
+			name:     "falls back when empty",
+			input:    "<style>p{}</style>",
+			expected: "(No description provided)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := cleanFeedDescription(tt.input)
+			if got != tt.expected {
+				t.Errorf("cleanFeedDescription(%q) = %q; want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}

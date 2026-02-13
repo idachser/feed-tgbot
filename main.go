@@ -43,10 +43,12 @@ func main() {
 	b.RegisterHandler(bot.HandlerTypeMessageText, "News", bot.MatchTypeExact, newsHandler)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "/remove", bot.MatchTypePrefix, removeHandler)
 	b.RegisterHandler(bot.HandlerTypeMessageText, "Remove", bot.MatchTypeExact, removeButtonHandler)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "/updates", bot.MatchTypeExact, updatesHandler)
+	b.RegisterHandler(bot.HandlerTypeMessageText, "Updates", bot.MatchTypeExact, updatesHandler)
 
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "", bot.MatchTypePrefix, callbackHandler)
 
-	go startScheduler(ctx, b, 30*time.Minute)
+	go startScheduler(ctx, b, 1*time.Minute)
 
 	b.Start(ctx)
 }

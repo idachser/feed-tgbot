@@ -50,8 +50,17 @@ func setupTestDB(t *testing.T) *sql.DB {
 		created_unix INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 	);
 
+	CREATE TABLE user_update_settings (
+		user_id INTEGER PRIMARY KEY,
+		enabled INTEGER NOT NULL DEFAULT 1,
+		interval_minutes INTEGER NOT NULL DEFAULT 30,
+		next_check_unix INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+		updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+	);
+
 	CREATE INDEX idx_subscriptions_user_id ON subscriptions(user_id);
 	CREATE INDEX idx_last_sent_user_id ON last_sent(user_id);
+	CREATE INDEX idx_user_update_settings_due ON user_update_settings(enabled, next_check_unix);
 	`
 
 	if _, err := db.Exec(schema); err != nil {
@@ -442,5 +451,163 @@ func TestStorage_PendingAction_Expires(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("expected pending action to be expired")
+	}
+}
+
+func TestStorage_UserUpdateSettings_Defaults(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	storage := NewStorage(db)
+	userID := int64(777)
+
+	if err := storage.EnsureUserUpdateSettings(userID); err != nil {
+		t.Fatalf("EnsureUserUpdateSettings failed: %v", err)
+	}
+
+	settings, err := storage.GetUserUpdateSettings(userID)
+	if err != nil {
+		t.Fatalf("GetUserUpdateSettings failed: %v", err)
+	}
+
+	if settings.UserID != userID {
+		t.Fatalf("expected userID %d, got %d", userID, settings.UserID)
+	}
+	if !settings.Enabled {
+		t.Fatal("expected enabled=true by default")
+	}
+	if settings.IntervalMinutes != defaultUserUpdateIntervalMinutes {
+		t.Fatalf("expected default interval %d, got %d", defaultUserUpdateIntervalMinutes, settings.IntervalMinutes)
+	}
+}
+
+func TestStorage_SetUserUpdatesEnabled(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	storage := NewStorage(db)
+	userID := int64(888)
+
+	if err := storage.SetUserUpdatesEnabled(userID, false); err != nil {
+		t.Fatalf("SetUserUpdatesEnabled(false) failed: %v", err)
+	}
+
+	settings, err := storage.GetUserUpdateSettings(userID)
+	if err != nil {
+		t.Fatalf("GetUserUpdateSettings failed: %v", err)
+	}
+	if settings.Enabled {
+		t.Fatal("expected enabled=false")
+	}
+
+	if err := storage.SetUserUpdatesEnabled(userID, true); err != nil {
+		t.Fatalf("SetUserUpdatesEnabled(true) failed: %v", err)
+	}
+
+	settings, err = storage.GetUserUpdateSettings(userID)
+	if err != nil {
+		t.Fatalf("GetUserUpdateSettings failed: %v", err)
+	}
+	if !settings.Enabled {
+		t.Fatal("expected enabled=true")
+	}
+}
+
+func TestStorage_SetUserUpdateInterval(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	storage := NewStorage(db)
+	userID := int64(999)
+
+	if err := storage.SetUserUpdateInterval(userID, 60); err != nil {
+		t.Fatalf("SetUserUpdateInterval(60) failed: %v", err)
+	}
+
+	settings, err := storage.GetUserUpdateSettings(userID)
+	if err != nil {
+		t.Fatalf("GetUserUpdateSettings failed: %v", err)
+	}
+	if settings.IntervalMinutes != 60 {
+		t.Fatalf("expected interval 60, got %d", settings.IntervalMinutes)
+	}
+}
+
+func TestStorage_SetUserUpdateInterval_Invalid(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	storage := NewStorage(db)
+	userID := int64(1001)
+
+	if err := storage.SetUserUpdateInterval(userID, 15); err == nil {
+		t.Fatal("expected error for invalid interval 15")
+	}
+}
+
+func TestStorage_SetNextCheckUnix(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	storage := NewStorage(db)
+	userID := int64(1002)
+	nextCheckUnix := time.Now().Unix() + 1234
+
+	if err := storage.SetNextCheckUnix(userID, nextCheckUnix); err != nil {
+		t.Fatalf("SetNextCheckUnix failed: %v", err)
+	}
+
+	settings, err := storage.GetUserUpdateSettings(userID)
+	if err != nil {
+		t.Fatalf("GetUserUpdateSettings failed: %v", err)
+	}
+	if settings.NextCheckUnix != nextCheckUnix {
+		t.Fatalf("expected next_check_unix %d, got %d", nextCheckUnix, settings.NextCheckUnix)
+	}
+}
+
+func TestStorage_ListDueUsers(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	storage := NewStorage(db)
+	nowUnix := time.Now().Unix()
+
+	dueUser := int64(2001)
+	disabledUser := int64(2002)
+	futureUser := int64(2003)
+
+	if err := storage.EnsureUserUpdateSettings(dueUser); err != nil {
+		t.Fatalf("EnsureUserUpdateSettings failed: %v", err)
+	}
+	if err := storage.EnsureUserUpdateSettings(disabledUser); err != nil {
+		t.Fatalf("EnsureUserUpdateSettings failed: %v", err)
+	}
+	if err := storage.EnsureUserUpdateSettings(futureUser); err != nil {
+		t.Fatalf("EnsureUserUpdateSettings failed: %v", err)
+	}
+
+	if err := storage.SetNextCheckUnix(dueUser, nowUnix-1); err != nil {
+		t.Fatalf("SetNextCheckUnix due user failed: %v", err)
+	}
+	if err := storage.SetUserUpdatesEnabled(disabledUser, false); err != nil {
+		t.Fatalf("SetUserUpdatesEnabled(false) failed: %v", err)
+	}
+	if err := storage.SetNextCheckUnix(disabledUser, nowUnix-1); err != nil {
+		t.Fatalf("SetNextCheckUnix disabled user failed: %v", err)
+	}
+	if err := storage.SetNextCheckUnix(futureUser, nowUnix+3600); err != nil {
+		t.Fatalf("SetNextCheckUnix future user failed: %v", err)
+	}
+
+	dueUsers, err := storage.ListDueUsers(nowUnix)
+	if err != nil {
+		t.Fatalf("ListDueUsers failed: %v", err)
+	}
+	if len(dueUsers) != 1 {
+		t.Fatalf("expected exactly 1 due user, got %d (%v)", len(dueUsers), dueUsers)
+	}
+	if dueUsers[0] != dueUser {
+		t.Fatalf("expected due user %d, got %d", dueUser, dueUsers[0])
 	}
 }

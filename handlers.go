@@ -13,7 +13,7 @@ import (
 	"github.com/go-telegram/bot/models"
 )
 
-const helpText = "/start - greeting\n/add <url> - add feed\n/list - show my feeds\n/news - get the latest 10 news items from all feeds\n/remove <url> - remove feed\n/help - show help"
+const helpText = "/start - greeting\n/add <url> - add feed\n/list - show my feeds\n/news - get the latest 10 news items from all feeds\n/remove <url> - remove feed\n/updates - manage automatic updates\n/help - show help"
 
 func startHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	sendMsgWithKeyboard(ctx, b, update.Message.Chat.ID, "Hello! I am a bot for RSS feeds.\n\nCommands:\n"+helpText)
@@ -95,6 +95,10 @@ func addButtonHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 // handler for showing inline keyboard feed selection
 const pendingSelectionMaxAge = 15 * time.Minute
 const addPendingAction = "add_waiting_url"
+const callbackAddFeed = "add_feed"
+const callbackRemoveFeed = "remove_feed"
+const callbackUpdatesToggle = "updates_toggle"
+const callbackUpdatesInterval = "updates_interval"
 
 func showFeedSelection(ctx context.Context, b *bot.Bot, chatID, userID int64, feeds []DiscoveredFeed) {
 	if len(feeds) == 1 {
@@ -112,7 +116,7 @@ func showFeedSelection(ctx context.Context, b *bot.Bot, chatID, userID int64, fe
 	var buttons [][]models.InlineKeyboardButton
 
 	for i, feed := range feeds {
-		callbackData := fmt.Sprintf("add_feed:%d:%d", userID, i)
+		callbackData := fmt.Sprintf("%s:%d:%d", callbackAddFeed, userID, i)
 
 		button := models.InlineKeyboardButton{
 			Text:         fmt.Sprintf("%s (%s)", feed.Title, feed.Type),
@@ -148,17 +152,12 @@ func callbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 
 	callbackType := parts[0]
-	if callbackType != "add_feed" && callbackType != "remove_feed" {
+	if callbackType != callbackAddFeed && callbackType != callbackRemoveFeed && callbackType != callbackUpdatesToggle && callbackType != callbackUpdatesInterval {
 		return
 	}
 
 	userID, err := strconv.ParseInt(parts[1], 10, 64)
 	if err != nil {
-		return
-	}
-
-	feedIndex, err := strconv.Atoi(parts[2])
-	if err != nil || feedIndex < 0 {
 		return
 	}
 
@@ -172,10 +171,26 @@ func callbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 
 	switch callbackType {
-	case "add_feed":
+	case callbackAddFeed:
+		feedIndex, err := strconv.Atoi(parts[2])
+		if err != nil || feedIndex < 0 {
+			return
+		}
 		handleAddFeedCallback(ctx, b, callback, userID, feedIndex)
-	case "remove_feed":
+	case callbackRemoveFeed:
+		feedIndex, err := strconv.Atoi(parts[2])
+		if err != nil || feedIndex < 0 {
+			return
+		}
 		handleRemoveFeedCallback(ctx, b, callback, userID, feedIndex)
+	case callbackUpdatesToggle:
+		handleUpdatesToggleCallback(ctx, b, callback, userID, parts[2])
+	case callbackUpdatesInterval:
+		intervalMinutes, err := strconv.Atoi(parts[2])
+		if err != nil {
+			return
+		}
+		handleUpdatesIntervalCallback(ctx, b, callback, userID, intervalMinutes)
 	}
 }
 
@@ -365,8 +380,10 @@ func newsHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 	for i := 0; i < limit; i++ {
 		item := allNews[i]
+		cleanTitle := cleanFeedTitle(item.Title)
+		cleanDescription := cleanFeedDescription(item.Description)
 
-		log.Printf("item: %s", item.Title)
+		log.Printf("item: %s", cleanTitle)
 
 		pubStr := "Unknown date"
 		if item.Published != nil {
@@ -374,8 +391,8 @@ func newsHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 		}
 
 		message := fmt.Sprintf("📰 *%s*\n\n%s\n\n🔗 %s\n📅 %s",
-			item.Title,
-			item.Description,
+			cleanTitle,
+			cleanDescription,
 			item.Link,
 			pubStr,
 		)
@@ -460,7 +477,7 @@ func showRemoveSelection(ctx context.Context, b *bot.Bot, chatID, userID int64, 
 		buttons = append(buttons, []models.InlineKeyboardButton{
 			{
 				Text:         "❌ " + truncate(feed, 56),
-				CallbackData: fmt.Sprintf("remove_feed:%d:%d", userID, i),
+				CallbackData: fmt.Sprintf("%s:%d:%d", callbackRemoveFeed, userID, i),
 			},
 		})
 	}
@@ -473,6 +490,168 @@ func showRemoveSelection(ctx context.Context, b *bot.Bot, chatID, userID int64, 
 		ChatID:      chatID,
 		Text:        "Choose feed to remove:",
 		ReplyMarkup: keyboard,
+	})
+}
+
+func updatesHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	userID := update.Message.From.ID
+	chatID := update.Message.Chat.ID
+	if err := storage.DeletePendingAction(userID); err != nil {
+		log.Printf("error deleting pending action: %v", err)
+	}
+
+	settings, err := storage.GetUserUpdateSettings(userID)
+	if err != nil {
+		log.Printf("error loading user update settings: %v", err)
+		sendMsg(ctx, b, chatID, "Error loading update settings.")
+		return
+	}
+
+	sendUpdatesSettingsMessage(ctx, b, chatID, settings)
+}
+
+func sendUpdatesSettingsMessage(ctx context.Context, b *bot.Bot, chatID int64, settings UserUpdateSettings) {
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:      chatID,
+		Text:        updatesSettingsText(settings),
+		ReplyMarkup: updatesSettingsKeyboard(settings),
+	})
+}
+
+func updatesSettingsText(settings UserUpdateSettings) string {
+	status := "OFF"
+	if settings.Enabled {
+		status = "ON"
+	}
+
+	return fmt.Sprintf(
+		"Automatic updates: %s\nCheck frequency: every %d minutes\n\nUse buttons to change settings.",
+		status,
+		settings.IntervalMinutes,
+	)
+}
+
+func updatesSettingsKeyboard(settings UserUpdateSettings) models.InlineKeyboardMarkup {
+	enableText := "Enable"
+	disableText := "Disable"
+	if settings.Enabled {
+		enableText += " ✅"
+	} else {
+		disableText += " ✅"
+	}
+
+	var intervalButtons []models.InlineKeyboardButton
+	for _, interval := range []int{30, 60, 360} {
+		text := fmt.Sprintf("%dm", interval)
+		if settings.IntervalMinutes == interval {
+			text += " ✅"
+		}
+
+		intervalButtons = append(intervalButtons, models.InlineKeyboardButton{
+			Text:         text,
+			CallbackData: fmt.Sprintf("%s:%d:%d", callbackUpdatesInterval, settings.UserID, interval),
+		})
+	}
+
+	return models.InlineKeyboardMarkup{
+		InlineKeyboard: [][]models.InlineKeyboardButton{
+			{
+				{
+					Text:         enableText,
+					CallbackData: fmt.Sprintf("%s:%d:on", callbackUpdatesToggle, settings.UserID),
+				},
+				{
+					Text:         disableText,
+					CallbackData: fmt.Sprintf("%s:%d:off", callbackUpdatesToggle, settings.UserID),
+				},
+			},
+			intervalButtons,
+		},
+	}
+}
+
+func handleUpdatesToggleCallback(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, userID int64, toggleValue string) {
+	var enabled bool
+	switch toggleValue {
+	case "on":
+		enabled = true
+	case "off":
+		enabled = false
+	default:
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: callback.ID,
+			Text:            "Invalid toggle value",
+			ShowAlert:       true,
+		})
+		return
+	}
+
+	if err := storage.SetUserUpdatesEnabled(userID, enabled); err != nil {
+		log.Printf("error setting updates enabled: %v", err)
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: callback.ID,
+			Text:            "Could not update setting",
+			ShowAlert:       true,
+		})
+		return
+	}
+
+	settings, err := storage.GetUserUpdateSettings(userID)
+	if err != nil {
+		log.Printf("error loading update settings: %v", err)
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: callback.ID,
+			Text:            "Could not load updated settings",
+			ShowAlert:       true,
+		})
+		return
+	}
+
+	b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+		CallbackQueryID: callback.ID,
+		Text:            "Settings updated",
+	})
+
+	b.EditMessageText(ctx, &bot.EditMessageTextParams{
+		ChatID:      callback.Message.Message.Chat.ID,
+		MessageID:   callback.Message.Message.ID,
+		Text:        updatesSettingsText(settings),
+		ReplyMarkup: updatesSettingsKeyboard(settings),
+	})
+}
+
+func handleUpdatesIntervalCallback(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, userID int64, intervalMinutes int) {
+	if err := storage.SetUserUpdateInterval(userID, intervalMinutes); err != nil {
+		log.Printf("error setting update interval: %v", err)
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: callback.ID,
+			Text:            "Invalid interval",
+			ShowAlert:       true,
+		})
+		return
+	}
+
+	settings, err := storage.GetUserUpdateSettings(userID)
+	if err != nil {
+		log.Printf("error loading update settings: %v", err)
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: callback.ID,
+			Text:            "Could not load updated settings",
+			ShowAlert:       true,
+		})
+		return
+	}
+
+	b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+		CallbackQueryID: callback.ID,
+		Text:            "Interval updated",
+	})
+
+	b.EditMessageText(ctx, &bot.EditMessageTextParams{
+		ChatID:      callback.Message.Message.Chat.ID,
+		MessageID:   callback.Message.Message.ID,
+		Text:        updatesSettingsText(settings),
+		ReplyMarkup: updatesSettingsKeyboard(settings),
 	})
 }
 
@@ -527,6 +706,7 @@ func commandReplyKeyboard() models.ReplyKeyboardMarkup {
 			},
 			{
 				{Text: "Help"},
+				{Text: "Updates"},
 			},
 		},
 		ResizeKeyboard:  true,

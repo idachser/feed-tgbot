@@ -11,8 +11,28 @@ type Storage struct {
 	db *sql.DB
 }
 
+type UserUpdateSettings struct {
+	UserID          int64
+	Enabled         bool
+	IntervalMinutes int
+	NextCheckUnix   int64
+}
+
+const defaultUserUpdateIntervalMinutes = 30
+
+var allowedUserUpdateIntervals = map[int]struct{}{
+	30: {},
+	60: {},
+	360: {},
+}
+
 func NewStorage(db *sql.DB) *Storage {
 	return &Storage{db: db}
+}
+
+func isValidUserUpdateInterval(intervalMinutes int) bool {
+	_, ok := allowedUserUpdateIntervals[intervalMinutes]
+	return ok
 }
 
 func (s *Storage) AddFeed(userID int64, feedURL string) error {
@@ -290,4 +310,144 @@ func (s *Storage) DeletePendingAction(userID int64) error {
 	}
 
 	return nil
+}
+
+func (s *Storage) EnsureUserUpdateSettings(userID int64) error {
+	query := `
+	INSERT OR IGNORE INTO user_update_settings (user_id, enabled, interval_minutes, next_check_unix)
+	VALUES (?, 1, ?, strftime('%s','now'))
+	`
+
+	if _, err := s.db.Exec(query, userID, defaultUserUpdateIntervalMinutes); err != nil {
+		return fmt.Errorf("failed to ensure user update settings: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Storage) GetUserUpdateSettings(userID int64) (UserUpdateSettings, error) {
+	if err := s.EnsureUserUpdateSettings(userID); err != nil {
+		return UserUpdateSettings{}, err
+	}
+
+	query := `
+	SELECT user_id, enabled, interval_minutes, next_check_unix
+	FROM user_update_settings
+	WHERE user_id = ?
+	`
+
+	var settings UserUpdateSettings
+	var enabledInt int
+	err := s.db.QueryRow(query, userID).Scan(
+		&settings.UserID,
+		&enabledInt,
+		&settings.IntervalMinutes,
+		&settings.NextCheckUnix,
+	)
+	if err != nil {
+		return UserUpdateSettings{}, fmt.Errorf("failed to get user update settings: %w", err)
+	}
+
+	settings.Enabled = enabledInt == 1
+	return settings, nil
+}
+
+func (s *Storage) SetUserUpdatesEnabled(userID int64, enabled bool) error {
+	if err := s.EnsureUserUpdateSettings(userID); err != nil {
+		return err
+	}
+
+	enabledInt := 0
+	query := `
+	UPDATE user_update_settings
+	SET enabled = ?, updated_at = CURRENT_TIMESTAMP
+	WHERE user_id = ?
+	`
+	args := []any{enabledInt, userID}
+
+	if enabled {
+		enabledInt = 1
+		query = `
+		UPDATE user_update_settings
+		SET enabled = ?, next_check_unix = strftime('%s','now'), updated_at = CURRENT_TIMESTAMP
+		WHERE user_id = ?
+		`
+		args = []any{enabledInt, userID}
+	}
+
+	if _, err := s.db.Exec(query, args...); err != nil {
+		return fmt.Errorf("failed to set user updates enabled: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Storage) SetUserUpdateInterval(userID int64, intervalMinutes int) error {
+	if !isValidUserUpdateInterval(intervalMinutes) {
+		return fmt.Errorf("invalid interval: %d", intervalMinutes)
+	}
+
+	if err := s.EnsureUserUpdateSettings(userID); err != nil {
+		return err
+	}
+
+	query := `
+	UPDATE user_update_settings
+	SET interval_minutes = ?, next_check_unix = strftime('%s','now') + (? * 60), updated_at = CURRENT_TIMESTAMP
+	WHERE user_id = ?
+	`
+
+	if _, err := s.db.Exec(query, intervalMinutes, intervalMinutes, userID); err != nil {
+		return fmt.Errorf("failed to set user update interval: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Storage) SetNextCheckUnix(userID int64, nextCheckUnix int64) error {
+	if err := s.EnsureUserUpdateSettings(userID); err != nil {
+		return err
+	}
+
+	query := `
+	UPDATE user_update_settings
+	SET next_check_unix = ?, updated_at = CURRENT_TIMESTAMP
+	WHERE user_id = ?
+	`
+
+	if _, err := s.db.Exec(query, nextCheckUnix, userID); err != nil {
+		return fmt.Errorf("failed to set next check unix: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Storage) ListDueUsers(nowUnix int64) ([]int64, error) {
+	query := `
+	SELECT user_id
+	FROM user_update_settings
+	WHERE enabled = 1 AND next_check_unix <= ?
+	ORDER BY next_check_unix ASC
+	`
+
+	rows, err := s.db.Query(query, nowUnix)
+	if err != nil {
+		return nil, fmt.Errorf("failed to list due users: %w", err)
+	}
+	defer rows.Close()
+
+	var users []int64
+	for rows.Next() {
+		var userID int64
+		if err := rows.Scan(&userID); err != nil {
+			return nil, fmt.Errorf("failed to scan due user: %w", err)
+		}
+		users = append(users, userID)
+	}
+
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("error iterating due users: %w", err)
+	}
+
+	return users, nil
 }
