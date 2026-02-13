@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 
@@ -32,8 +33,15 @@ func addHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 
-	urls := splitArgs(args)
 	userID := update.Message.From.ID
+	if err := storage.DeletePendingAction(userID); err != nil {
+		log.Printf("error deleting pending action: %v", err)
+	}
+	processAddInput(ctx, b, chatID, userID, args)
+}
+
+func processAddInput(ctx context.Context, b *bot.Bot, chatID, userID int64, args string) {
+	urls := splitArgs(args)
 
 	for _, url := range urls {
 		if !isValidURL(url) {
@@ -71,8 +79,22 @@ func addHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 }
 
+func addButtonHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	chatID := update.Message.Chat.ID
+	userID := update.Message.From.ID
+
+	if err := storage.SetPendingAction(userID, addPendingAction); err != nil {
+		log.Printf("error setting pending action: %v", err)
+		sendMsg(ctx, b, chatID, "❌ Error preparing add action. Try again.")
+		return
+	}
+
+	sendMsg(ctx, b, chatID, "Send feed URL (or page URL) to add.")
+}
+
 // handler for showing inline keyboard feed selection
 const pendingSelectionMaxAge = 15 * time.Minute
+const addPendingAction = "add_waiting_url"
 
 func showFeedSelection(ctx context.Context, b *bot.Bot, chatID, userID int64, feeds []DiscoveredFeed) {
 	if len(feeds) == 1 {
@@ -121,15 +143,26 @@ func callbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	callback := update.CallbackQuery
 
 	parts := strings.Split(callback.Data, ":")
-	if len(parts) != 3 || parts[0] != "add_feed" {
+	if len(parts) != 3 {
 		return
 	}
 
-	var userID, feedIndex int
-	fmt.Sscanf(parts[1], "%d", &userID)
-	fmt.Sscanf(parts[2], "%d", &feedIndex)
+	callbackType := parts[0]
+	if callbackType != "add_feed" && callbackType != "remove_feed" {
+		return
+	}
 
-	if int64(userID) != callback.From.ID {
+	userID, err := strconv.ParseInt(parts[1], 10, 64)
+	if err != nil {
+		return
+	}
+
+	feedIndex, err := strconv.Atoi(parts[2])
+	if err != nil || feedIndex < 0 {
+		return
+	}
+
+	if userID != callback.From.ID {
 		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
 			CallbackQueryID: callback.ID,
 			Text:            "This button is not for you",
@@ -138,7 +171,16 @@ func callbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 
-	feeds, ok, err := storage.GetPendingFeeds(int64(userID), pendingSelectionMaxAge)
+	switch callbackType {
+	case "add_feed":
+		handleAddFeedCallback(ctx, b, callback, userID, feedIndex)
+	case "remove_feed":
+		handleRemoveFeedCallback(ctx, b, callback, userID, feedIndex)
+	}
+}
+
+func handleAddFeedCallback(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, userID int64, feedIndex int) {
+	feeds, ok, err := storage.GetPendingFeeds(userID, pendingSelectionMaxAge)
 	if err != nil {
 		log.Printf("Error loading pending feeds: %v", err)
 		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
@@ -158,8 +200,7 @@ func callbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 
 	selectedFeed := feeds[feedIndex]
-
-	err = storage.AddFeed(int64(userID), selectedFeed.URL)
+	err = storage.AddFeed(userID, selectedFeed.URL)
 	if err != nil {
 		log.Printf("Error adding feed: %v", err)
 		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
@@ -170,7 +211,7 @@ func callbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 
-	if err := storage.DeletePendingFeeds(int64(userID)); err != nil {
+	if err := storage.DeletePendingFeeds(userID); err != nil {
 		log.Printf("Error deleting pending feeds: %v", err)
 	}
 
@@ -183,6 +224,62 @@ func callbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 		ChatID:    callback.Message.Message.Chat.ID,
 		MessageID: callback.Message.Message.ID,
 		Text:      fmt.Sprintf("✅ Added: %s\n🔗 %s", selectedFeed.Title, selectedFeed.URL),
+	})
+}
+
+func handleRemoveFeedCallback(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, userID int64, feedIndex int) {
+	feeds, ok, err := storage.GetPendingRemoveFeeds(userID, pendingSelectionMaxAge)
+	if err != nil {
+		log.Printf("Error loading pending remove feeds: %v", err)
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: callback.ID,
+			Text:            "Error loading selection. Try Remove again",
+			ShowAlert:       true,
+		})
+		return
+	}
+	if !ok || feedIndex >= len(feeds) {
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: callback.ID,
+			Text:            "Selection expired. Tap Remove again",
+			ShowAlert:       true,
+		})
+		return
+	}
+
+	selectedFeed := feeds[feedIndex]
+	removed, err := storage.RemoveFeed(userID, selectedFeed)
+	if err != nil {
+		log.Printf("Error removing feed: %v", err)
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: callback.ID,
+			Text:            "Error removing feed",
+			ShowAlert:       true,
+		})
+		return
+	}
+	if !removed {
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: callback.ID,
+			Text:            "Feed not found anymore",
+			ShowAlert:       true,
+		})
+		return
+	}
+
+	if err := storage.DeletePendingRemoveFeeds(userID); err != nil {
+		log.Printf("Error deleting pending remove feeds: %v", err)
+	}
+
+	b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+		CallbackQueryID: callback.ID,
+		Text:            "✅ Feed removed!",
+	})
+
+	b.EditMessageText(ctx, &bot.EditMessageTextParams{
+		ChatID:    callback.Message.Message.Chat.ID,
+		MessageID: callback.Message.Message.ID,
+		Text:      fmt.Sprintf("✅ Removed:\n%s", selectedFeed),
 	})
 }
 
@@ -304,6 +401,9 @@ func removeHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 
 	urls := splitArgs(args)
 	userID := update.Message.From.ID
+	if err := storage.DeletePendingAction(userID); err != nil {
+		log.Printf("error deleting pending action: %v", err)
+	}
 
 	for _, url := range urls {
 		if !isValidURL(url) {
@@ -327,14 +427,100 @@ func removeHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 }
 
+func removeButtonHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	userID := update.Message.From.ID
+	chatID := update.Message.Chat.ID
+	if err := storage.DeletePendingAction(userID); err != nil {
+		log.Printf("error deleting pending action: %v", err)
+	}
+
+	feeds, err := storage.GetFeeds(userID)
+	if err != nil {
+		log.Printf("error getting feeds: %v", err)
+		sendMsg(ctx, b, chatID, "Error loading feeds.")
+		return
+	}
+	if len(feeds) == 0 {
+		sendMsg(ctx, b, chatID, "You have no feeds yet. Use /add <url>")
+		return
+	}
+
+	if err := storage.SetPendingRemoveFeeds(userID, feeds); err != nil {
+		log.Printf("error saving pending remove feeds: %v", err)
+		sendMsg(ctx, b, chatID, "❌ Error preparing remove list")
+		return
+	}
+
+	showRemoveSelection(ctx, b, chatID, userID, feeds)
+}
+
+func showRemoveSelection(ctx context.Context, b *bot.Bot, chatID, userID int64, feeds []string) {
+	var buttons [][]models.InlineKeyboardButton
+	for i, feed := range feeds {
+		buttons = append(buttons, []models.InlineKeyboardButton{
+			{
+				Text:         "❌ " + truncate(feed, 56),
+				CallbackData: fmt.Sprintf("remove_feed:%d:%d", userID, i),
+			},
+		})
+	}
+
+	keyboard := models.InlineKeyboardMarkup{
+		InlineKeyboard: buttons,
+	}
+
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:      chatID,
+		Text:        "Choose feed to remove:",
+		ReplyMarkup: keyboard,
+	})
+}
+
 // send message with help instructions
 func defaultHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
+	if update.Message == nil {
+		return
+	}
+
+	chatID := update.Message.Chat.ID
+	userID := update.Message.From.ID
+
+	action, ok, err := storage.GetPendingAction(userID, pendingSelectionMaxAge)
+	if err != nil {
+		log.Printf("error getting pending action: %v", err)
+		sendMsg(ctx, b, chatID, "Error loading pending action.")
+		return
+	}
+	if ok && action == addPendingAction {
+		urls := splitArgs(strings.TrimSpace(update.Message.Text))
+		if len(urls) == 0 {
+			sendMsg(ctx, b, chatID, "Send feed URL (or page URL) to add.")
+			return
+		}
+		for _, url := range urls {
+			if !isValidURL(url) {
+				sendMsg(ctx, b, chatID, "Please send a valid URL starting with http:// or https://")
+				return
+			}
+		}
+
+		if err := storage.DeletePendingAction(userID); err != nil {
+			log.Printf("error deleting pending action: %v", err)
+		}
+		processAddInput(ctx, b, chatID, userID, strings.TrimSpace(update.Message.Text))
+		return
+	}
+
 	sendMsg(ctx, b, update.Message.Chat.ID, helpText)
 }
 
 func commandReplyKeyboard() models.ReplyKeyboardMarkup {
 	return models.ReplyKeyboardMarkup{
 		Keyboard: [][]models.KeyboardButton{
+			{
+				{Text: "Add"},
+				{Text: "Remove"},
+			},
 			{
 				{Text: "News"},
 				{Text: "List"},

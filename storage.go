@@ -183,3 +183,111 @@ func (s *Storage) DeletePendingFeeds(userID int64) error {
 
 	return nil
 }
+
+func (s *Storage) SetPendingRemoveFeeds(userID int64, feeds []string) error {
+	feedsJSON, err := json.Marshal(feeds)
+	if err != nil {
+		return fmt.Errorf("failed to marshal pending remove feeds: %w", err)
+	}
+
+	query := `
+	INSERT INTO pending_remove_selections (user_id, feeds_json, created_unix)
+	VALUES (?, ?, strftime('%s','now'))
+	ON CONFLICT(user_id)
+	DO UPDATE SET feeds_json = excluded.feeds_json, created_unix = strftime('%s','now')
+	`
+
+	_, err = s.db.Exec(query, userID, string(feedsJSON))
+	if err != nil {
+		return fmt.Errorf("failed to set pending remove feeds: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Storage) GetPendingRemoveFeeds(userID int64, maxAge time.Duration) ([]string, bool, error) {
+	query := `SELECT feeds_json, created_unix FROM pending_remove_selections WHERE user_id = ?`
+
+	var feedsJSON string
+	var createdUnix int64
+	err := s.db.QueryRow(query, userID).Scan(&feedsJSON, &createdUnix)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("failed to get pending remove feeds: %w", err)
+	}
+
+	if maxAge > 0 && time.Now().Unix()-createdUnix > int64(maxAge.Seconds()) {
+		if delErr := s.DeletePendingRemoveFeeds(userID); delErr != nil {
+			return nil, false, fmt.Errorf("failed to cleanup expired pending remove feeds: %w", delErr)
+		}
+		return nil, false, nil
+	}
+
+	var feeds []string
+	if err := json.Unmarshal([]byte(feedsJSON), &feeds); err != nil {
+		return nil, false, fmt.Errorf("failed to unmarshal pending remove feeds: %w", err)
+	}
+
+	return feeds, true, nil
+}
+
+func (s *Storage) DeletePendingRemoveFeeds(userID int64) error {
+	query := `DELETE FROM pending_remove_selections WHERE user_id = ?`
+
+	if _, err := s.db.Exec(query, userID); err != nil {
+		return fmt.Errorf("failed to delete pending remove feeds: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Storage) SetPendingAction(userID int64, action string) error {
+	query := `
+	INSERT INTO pending_user_actions (user_id, action, created_unix)
+	VALUES (?, ?, strftime('%s','now'))
+	ON CONFLICT(user_id)
+	DO UPDATE SET action = excluded.action, created_unix = strftime('%s','now')
+	`
+
+	_, err := s.db.Exec(query, userID, action)
+	if err != nil {
+		return fmt.Errorf("failed to set pending action: %w", err)
+	}
+
+	return nil
+}
+
+func (s *Storage) GetPendingAction(userID int64, maxAge time.Duration) (string, bool, error) {
+	query := `SELECT action, created_unix FROM pending_user_actions WHERE user_id = ?`
+
+	var action string
+	var createdUnix int64
+	err := s.db.QueryRow(query, userID).Scan(&action, &createdUnix)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("failed to get pending action: %w", err)
+	}
+
+	if maxAge > 0 && time.Now().Unix()-createdUnix > int64(maxAge.Seconds()) {
+		if delErr := s.DeletePendingAction(userID); delErr != nil {
+			return "", false, fmt.Errorf("failed to cleanup expired pending action: %w", delErr)
+		}
+		return "", false, nil
+	}
+
+	return action, true, nil
+}
+
+func (s *Storage) DeletePendingAction(userID int64) error {
+	query := `DELETE FROM pending_user_actions WHERE user_id = ?`
+
+	if _, err := s.db.Exec(query, userID); err != nil {
+		return fmt.Errorf("failed to delete pending action: %w", err)
+	}
+
+	return nil
+}

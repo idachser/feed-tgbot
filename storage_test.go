@@ -38,6 +38,18 @@ func setupTestDB(t *testing.T) *sql.DB {
 		created_unix INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 	);
 
+	CREATE TABLE pending_remove_selections (
+		user_id INTEGER PRIMARY KEY,
+		feeds_json TEXT NOT NULL,
+		created_unix INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+	);
+
+	CREATE TABLE pending_user_actions (
+		user_id INTEGER PRIMARY KEY,
+		action TEXT NOT NULL,
+		created_unix INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+	);
+
 	CREATE INDEX idx_subscriptions_user_id ON subscriptions(user_id);
 	CREATE INDEX idx_last_sent_user_id ON last_sent(user_id);
 	`
@@ -301,5 +313,134 @@ func TestStorage_PendingFeeds_Expires(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("expected pending feeds to be expired")
+	}
+}
+
+func TestStorage_PendingRemoveFeeds(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	storage := NewStorage(db)
+	userID := int64(123)
+
+	feeds := []string{
+		"https://example.com/feed1.rss",
+		"https://example.com/feed2.rss",
+	}
+
+	if err := storage.SetPendingRemoveFeeds(userID, feeds); err != nil {
+		t.Fatalf("SetPendingRemoveFeeds failed: %v", err)
+	}
+
+	gotFeeds, ok, err := storage.GetPendingRemoveFeeds(userID, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("GetPendingRemoveFeeds failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected pending remove feeds to exist")
+	}
+	if len(gotFeeds) != len(feeds) {
+		t.Fatalf("expected %d feeds, got %d", len(feeds), len(gotFeeds))
+	}
+
+	if err := storage.DeletePendingRemoveFeeds(userID); err != nil {
+		t.Fatalf("DeletePendingRemoveFeeds failed: %v", err)
+	}
+
+	_, ok, err = storage.GetPendingRemoveFeeds(userID, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("GetPendingRemoveFeeds after delete failed: %v", err)
+	}
+	if ok {
+		t.Fatal("expected no pending remove feeds after delete")
+	}
+}
+
+func TestStorage_PendingRemoveFeeds_Expires(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	storage := NewStorage(db)
+	userID := int64(123)
+
+	feeds := []string{
+		"https://example.com/feed.rss",
+	}
+
+	if err := storage.SetPendingRemoveFeeds(userID, feeds); err != nil {
+		t.Fatalf("SetPendingRemoveFeeds failed: %v", err)
+	}
+
+	_, err := db.Exec(`UPDATE pending_remove_selections SET created_unix = strftime('%s','now') - 3600 WHERE user_id = ?`, userID)
+	if err != nil {
+		t.Fatalf("failed to age pending remove selection: %v", err)
+	}
+
+	_, ok, err := storage.GetPendingRemoveFeeds(userID, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("GetPendingRemoveFeeds failed: %v", err)
+	}
+	if ok {
+		t.Fatal("expected pending remove feeds to be expired")
+	}
+}
+
+func TestStorage_PendingAction(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	storage := NewStorage(db)
+	userID := int64(123)
+
+	if err := storage.SetPendingAction(userID, "add_waiting_url"); err != nil {
+		t.Fatalf("SetPendingAction failed: %v", err)
+	}
+
+	action, ok, err := storage.GetPendingAction(userID, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("GetPendingAction failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected pending action to exist")
+	}
+	if action != "add_waiting_url" {
+		t.Fatalf("expected action %q, got %q", "add_waiting_url", action)
+	}
+
+	if err := storage.DeletePendingAction(userID); err != nil {
+		t.Fatalf("DeletePendingAction failed: %v", err)
+	}
+
+	_, ok, err = storage.GetPendingAction(userID, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("GetPendingAction after delete failed: %v", err)
+	}
+	if ok {
+		t.Fatal("expected no pending action after delete")
+	}
+}
+
+func TestStorage_PendingAction_Expires(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	storage := NewStorage(db)
+	userID := int64(123)
+
+	if err := storage.SetPendingAction(userID, "add_waiting_url"); err != nil {
+		t.Fatalf("SetPendingAction failed: %v", err)
+	}
+
+	_, err := db.Exec(`UPDATE pending_user_actions SET created_unix = strftime('%s','now') - 3600 WHERE user_id = ?`, userID)
+	if err != nil {
+		t.Fatalf("failed to age pending action: %v", err)
+	}
+
+	_, ok, err := storage.GetPendingAction(userID, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("GetPendingAction failed: %v", err)
+	}
+	if ok {
+		t.Fatal("expected pending action to be expired")
 	}
 }
