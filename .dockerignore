@@ -1,6 +1,11 @@
 .git
 .gitignore
-README.md 
 .env
-feed-tgbot
 restart-bot.sh
+bot.db
+*.db
+*.sqlite
+*.sqlite3
+*.log
+tmp/
+.DS_Store
