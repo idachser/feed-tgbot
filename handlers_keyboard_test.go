@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -63,6 +64,35 @@ func TestHelpTextIncludesCoreCommands(t *testing.T) {
 	for _, command := range required {
 		if !strings.Contains(helpText, command) {
 			t.Fatalf("helpText must contain %q", command)
+		}
+	}
+}
+
+func TestNewsSourceSelectionKeyboard(t *testing.T) {
+	userID := int64(42)
+	feeds := []string{
+		"https://example.com/feed1.xml",
+		"https://example.com/feed2.xml",
+	}
+
+	keyboard := newsSourceSelectionKeyboard(userID, feeds)
+
+	if len(keyboard.InlineKeyboard) != len(feeds) {
+		t.Fatalf("expected %d rows, got %d", len(feeds), len(keyboard.InlineKeyboard))
+	}
+
+	for i, row := range keyboard.InlineKeyboard {
+		if len(row) != 1 {
+			t.Fatalf("expected 1 button in row %d, got %d", i, len(row))
+		}
+
+		btn := row[0]
+		expectedCallback := fmt.Sprintf("%s:%d:%d", callbackNewsFeed, userID, i)
+		if btn.CallbackData != expectedCallback {
+			t.Fatalf("unexpected callback data at row %d: got %q want %q", i, btn.CallbackData, expectedCallback)
+		}
+		if btn.Text == "" {
+			t.Fatalf("button text at row %d should not be empty", i)
 		}
 	}
 }

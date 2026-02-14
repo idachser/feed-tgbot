@@ -44,6 +44,12 @@ func setupTestDB(t *testing.T) *sql.DB {
 		created_unix INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 	);
 
+	CREATE TABLE pending_news_selections (
+		user_id INTEGER PRIMARY KEY,
+		feeds_json TEXT NOT NULL,
+		created_unix INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+	);
+
 	CREATE TABLE pending_user_actions (
 		user_id INTEGER PRIMARY KEY,
 		action TEXT NOT NULL,
@@ -391,6 +397,75 @@ func TestStorage_PendingRemoveFeeds_Expires(t *testing.T) {
 	}
 	if ok {
 		t.Fatal("expected pending remove feeds to be expired")
+	}
+}
+
+func TestStorage_PendingNewsFeeds(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	storage := NewStorage(db)
+	userID := int64(123)
+
+	feeds := []string{
+		"https://example.com/feed1.rss",
+		"https://example.com/feed2.rss",
+	}
+
+	if err := storage.SetPendingNewsFeeds(userID, feeds); err != nil {
+		t.Fatalf("SetPendingNewsFeeds failed: %v", err)
+	}
+
+	gotFeeds, ok, err := storage.GetPendingNewsFeeds(userID, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("GetPendingNewsFeeds failed: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected pending news feeds to exist")
+	}
+	if len(gotFeeds) != len(feeds) {
+		t.Fatalf("expected %d feeds, got %d", len(feeds), len(gotFeeds))
+	}
+
+	if err := storage.DeletePendingNewsFeeds(userID); err != nil {
+		t.Fatalf("DeletePendingNewsFeeds failed: %v", err)
+	}
+
+	_, ok, err = storage.GetPendingNewsFeeds(userID, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("GetPendingNewsFeeds after delete failed: %v", err)
+	}
+	if ok {
+		t.Fatal("expected no pending news feeds after delete")
+	}
+}
+
+func TestStorage_PendingNewsFeeds_Expires(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	storage := NewStorage(db)
+	userID := int64(123)
+
+	feeds := []string{
+		"https://example.com/feed.rss",
+	}
+
+	if err := storage.SetPendingNewsFeeds(userID, feeds); err != nil {
+		t.Fatalf("SetPendingNewsFeeds failed: %v", err)
+	}
+
+	_, err := db.Exec(`UPDATE pending_news_selections SET created_unix = strftime('%s','now') - 3600 WHERE user_id = ?`, userID)
+	if err != nil {
+		t.Fatalf("failed to age pending news selection: %v", err)
+	}
+
+	_, ok, err := storage.GetPendingNewsFeeds(userID, 15*time.Minute)
+	if err != nil {
+		t.Fatalf("GetPendingNewsFeeds failed: %v", err)
+	}
+	if ok {
+		t.Fatal("expected pending news feeds to be expired")
 	}
 }
 

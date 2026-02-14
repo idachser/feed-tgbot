@@ -287,3 +287,64 @@ func TestCleanFeedDescription(t *testing.T) {
 		})
 	}
 }
+
+func TestFormatTelegramLink(t *testing.T) {
+	tests := []struct {
+		name     string
+		url      string
+		label    string
+		expected string
+	}{
+		{
+			name:     "valid url returns clickable html link",
+			url:      "https://example.com?q=1&x=2",
+			label:    "Read article",
+			expected: `<a href="https://example.com?q=1&amp;x=2">Read article</a>`,
+		},
+		{
+			name:     "invalid url falls back to plain escaped text",
+			url:      "javascript:alert(1)",
+			label:    "Read article",
+			expected: "Read article: javascript:alert(1)",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := formatTelegramLink(tt.url, tt.label)
+			if got != tt.expected {
+				t.Errorf("formatTelegramLink(%q, %q) = %q; want %q", tt.url, tt.label, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestBuildNewsMessage(t *testing.T) {
+	item := FeedItem{
+		Title:       "A < B &amp; C",
+		Description: "<p>Hello <b>world</b></p>",
+		Link:        "https://example.com/post?id=1&src=rss",
+	}
+
+	got := buildNewsMessage(item, "2026-02-13 10:30")
+	expected := "📰 <b>A &lt; B &amp; C</b>\n\nHello world\n\n🔗 <a href=\"https://example.com/post?id=1&amp;src=rss\">Read article</a>\n📅 2026-02-13 10:30"
+
+	if got != expected {
+		t.Errorf("buildNewsMessage() = %q; want %q", got, expected)
+	}
+}
+
+func TestBuildAutoNewsMessage(t *testing.T) {
+	item := FeedItem{
+		Title:       "Title",
+		Description: "",
+		Link:        "https://example.com/post",
+	}
+
+	got := buildAutoNewsMessage("https://example.com/feed.xml", item)
+	expected := "🆕 New from <a href=\"https://example.com/feed.xml\">Feed</a>\n\n📰 <b>Title</b>\n\n(No description provided)\n\n🔗 <a href=\"https://example.com/post\">Read article</a>"
+
+	if got != expected {
+		t.Errorf("buildAutoNewsMessage() = %q; want %q", got, expected)
+	}
+}

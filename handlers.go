@@ -13,7 +13,7 @@ import (
 	"github.com/go-telegram/bot/models"
 )
 
-const helpText = "/start - greeting\n/add <url> - add feed\n/list - show my feeds\n/news - get the latest 10 news items from all feeds\n/remove <url> - remove feed\n/updates - manage automatic updates\n/help - show help"
+const helpText = "/start - greeting\n/add <url> - add feed\n/list - show my feeds\n/news - choose a feed source and get latest 10 news items\n/remove <url> - remove feed\n/updates - manage automatic updates\n/help - show help"
 
 func startHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	sendMsgWithKeyboard(ctx, b, update.Message.Chat.ID, "Hello! I am a bot for RSS feeds.\n\nCommands:\n"+helpText)
@@ -97,6 +97,7 @@ const pendingSelectionMaxAge = 15 * time.Minute
 const addPendingAction = "add_waiting_url"
 const callbackAddFeed = "add_feed"
 const callbackRemoveFeed = "remove_feed"
+const callbackNewsFeed = "news_feed"
 const callbackUpdatesToggle = "updates_toggle"
 const callbackUpdatesInterval = "updates_interval"
 
@@ -152,7 +153,7 @@ func callbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 	}
 
 	callbackType := parts[0]
-	if callbackType != callbackAddFeed && callbackType != callbackRemoveFeed && callbackType != callbackUpdatesToggle && callbackType != callbackUpdatesInterval {
+	if callbackType != callbackAddFeed && callbackType != callbackRemoveFeed && callbackType != callbackNewsFeed && callbackType != callbackUpdatesToggle && callbackType != callbackUpdatesInterval {
 		return
 	}
 
@@ -183,6 +184,12 @@ func callbackHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 			return
 		}
 		handleRemoveFeedCallback(ctx, b, callback, userID, feedIndex)
+	case callbackNewsFeed:
+		feedIndex, err := strconv.Atoi(parts[2])
+		if err != nil || feedIndex < 0 {
+			return
+		}
+		handleNewsFeedCallback(ctx, b, callback, userID, feedIndex)
 	case callbackUpdatesToggle:
 		handleUpdatesToggleCallback(ctx, b, callback, userID, parts[2])
 	case callbackUpdatesInterval:
@@ -341,67 +348,108 @@ func newsHandler(ctx context.Context, b *bot.Bot, update *models.Update) {
 		return
 	}
 
-	sendMsg(ctx, b, chatID, "Loading news...")
-
-	var allNews []FeedItem
-
-	for _, url := range feeds {
-		news, err := getFeedsWithContext(ctx, url)
-		if err != nil {
-
-			log.Printf("error fetching feed %s: %v", url, err)
-
-			continue
-		}
-		allNews = append(allNews, news...)
-	}
-
-	log.Printf("total news fetched = %d", len(allNews))
-
-	if len(allNews) == 0 {
-		sendMsg(ctx, b, chatID, "No news found.")
+	if err := storage.SetPendingNewsFeeds(userID, feeds); err != nil {
+		log.Printf("error saving pending news feeds: %v", err)
+		sendMsg(ctx, b, chatID, "❌ Error preparing news source selection")
 		return
 	}
 
-	sort.Slice(allNews, func(i, j int) bool {
-		if allNews[i].Published == nil {
+	showNewsSourceSelection(ctx, b, chatID, userID, feeds)
+}
+
+func showNewsSourceSelection(ctx context.Context, b *bot.Bot, chatID, userID int64, feeds []string) {
+	keyboard := newsSourceSelectionKeyboard(userID, feeds)
+
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:      chatID,
+		Text:        "Choose feed source for latest news:",
+		ReplyMarkup: keyboard,
+	})
+}
+
+func newsSourceSelectionKeyboard(userID int64, feeds []string) models.InlineKeyboardMarkup {
+	var buttons [][]models.InlineKeyboardButton
+	for i, feed := range feeds {
+		buttons = append(buttons, []models.InlineKeyboardButton{
+			{
+				Text:         "📰 " + truncate(feed, 56),
+				CallbackData: fmt.Sprintf("%s:%d:%d", callbackNewsFeed, userID, i),
+			},
+		})
+	}
+
+	return models.InlineKeyboardMarkup{
+		InlineKeyboard: buttons,
+	}
+}
+
+func handleNewsFeedCallback(ctx context.Context, b *bot.Bot, callback *models.CallbackQuery, userID int64, feedIndex int) {
+	feeds, ok, err := storage.GetPendingNewsFeeds(userID, pendingSelectionMaxAge)
+	if err != nil {
+		log.Printf("Error loading pending news feeds: %v", err)
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: callback.ID,
+			Text:            "Error loading selection. Try /news again",
+			ShowAlert:       true,
+		})
+		return
+	}
+	if !ok || feedIndex >= len(feeds) {
+		b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: callback.ID,
+			Text:            "Selection expired. Run /news again",
+			ShowAlert:       true,
+		})
+		return
+	}
+
+	selectedFeedURL := feeds[feedIndex]
+
+	b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+		CallbackQueryID: callback.ID,
+		Text:            "Loading news...",
+	})
+
+	news, err := getFeedsWithContext(ctx, selectedFeedURL)
+	if err != nil {
+		log.Printf("error fetching selected feed %s: %v", selectedFeedURL, err)
+		sendMsg(ctx, b, callback.Message.Message.Chat.ID, "❌ Failed to fetch news from selected source")
+		return
+	}
+
+	if len(news) == 0 {
+		sendMsg(ctx, b, callback.Message.Message.Chat.ID, "No news found for selected source.")
+		return
+	}
+
+	sort.Slice(news, func(i, j int) bool {
+		if news[i].Published == nil {
 			return false
 		}
-		if allNews[j].Published == nil {
+		if news[j].Published == nil {
 			return true
 		}
-		return allNews[i].Published.After(*allNews[j].Published)
+		return news[i].Published.After(*news[j].Published)
 	})
 
 	limit := 10
-	if len(allNews) < limit {
-		limit = len(allNews)
+	if len(news) < limit {
+		limit = len(news)
 	}
 
 	for i := 0; i < limit; i++ {
-		item := allNews[i]
-		cleanTitle := cleanFeedTitle(item.Title)
-		cleanDescription := cleanFeedDescription(item.Description)
-
-		log.Printf("item: %s", cleanTitle)
-
+		item := news[i]
 		pubStr := "Unknown date"
 		if item.Published != nil {
 			pubStr = item.Published.Format("2006-01-02 15:04")
 		}
 
-		message := fmt.Sprintf("📰 *%s*\n\n%s\n\n🔗 %s\n📅 %s",
-			cleanTitle,
-			cleanDescription,
-			item.Link,
-			pubStr,
-		)
-
-		log.Printf("message: %s", message)
+		message := buildNewsMessage(item, pubStr)
 
 		b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID: chatID,
-			Text:   message,
+			ChatID:    callback.Message.Message.Chat.ID,
+			Text:      message,
+			ParseMode: models.ParseModeHTML,
 		})
 	}
 }
@@ -472,6 +520,16 @@ func removeButtonHandler(ctx context.Context, b *bot.Bot, update *models.Update)
 }
 
 func showRemoveSelection(ctx context.Context, b *bot.Bot, chatID, userID int64, feeds []string) {
+	keyboard := removeSelectionKeyboard(userID, feeds)
+
+	b.SendMessage(ctx, &bot.SendMessageParams{
+		ChatID:      chatID,
+		Text:        "Choose feed to remove:",
+		ReplyMarkup: keyboard,
+	})
+}
+
+func removeSelectionKeyboard(userID int64, feeds []string) models.InlineKeyboardMarkup {
 	var buttons [][]models.InlineKeyboardButton
 	for i, feed := range feeds {
 		buttons = append(buttons, []models.InlineKeyboardButton{
@@ -482,15 +540,9 @@ func showRemoveSelection(ctx context.Context, b *bot.Bot, chatID, userID int64, 
 		})
 	}
 
-	keyboard := models.InlineKeyboardMarkup{
+	return models.InlineKeyboardMarkup{
 		InlineKeyboard: buttons,
 	}
-
-	b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:      chatID,
-		Text:        "Choose feed to remove:",
-		ReplyMarkup: keyboard,
-	})
 }
 
 func updatesHandler(ctx context.Context, b *bot.Bot, update *models.Update) {

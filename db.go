@@ -61,6 +61,12 @@ func createTables() error {
 		created_unix INTEGER NOT NULL DEFAULT (strftime('%s','now'))
 	);
 
+	CREATE TABLE IF NOT EXISTS pending_news_selections (
+		user_id INTEGER PRIMARY KEY,
+		feeds_json TEXT NOT NULL,
+		created_unix INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+	);
+
 	CREATE TABLE IF NOT EXISTS pending_user_actions (
 		user_id INTEGER PRIMARY KEY,
 		action TEXT NOT NULL,

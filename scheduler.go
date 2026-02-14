@@ -2,11 +2,11 @@ package main
 
 import (
 	"context"
-	"fmt"
 	"log"
 	"time"
 
 	"github.com/go-telegram/bot"
+	"github.com/go-telegram/bot/models"
 )
 
 func startScheduler(ctx context.Context, b *bot.Bot, interval time.Duration) {
@@ -99,18 +99,12 @@ func checkAndSendNews(ctx context.Context, b *bot.Bot) {
 
 func sendNewsToUser(ctx context.Context, b *bot.Bot, userID int64, feedURL string, items []FeedItem) {
 	for _, item := range items {
-		cleanTitle := cleanFeedTitle(item.Title)
-		cleanDescription := cleanFeedDescription(item.Description)
-		message := fmt.Sprintf("🆕 *New from %s*\n\n📰 *%s*\n\n%s\n\n🔗 %s",
-			feedURL,
-			cleanTitle,
-			cleanDescription,
-			item.Link,
-		)
+		message := buildAutoNewsMessage(feedURL, item)
 
 		_, err := b.SendMessage(ctx, &bot.SendMessageParams{
-			ChatID: userID,
-			Text:   message,
+			ChatID:    userID,
+			Text:      message,
+			ParseMode: models.ParseModeHTML,
 		})
 		if err != nil {
 			log.Printf("error sending message to user %d: %v", userID, err)

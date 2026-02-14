@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"html"
 	u "net/url"
 	"regexp"
@@ -74,4 +75,46 @@ func cleanFeedDescription(raw string) string {
 		return "(No description provided)"
 	}
 	return description
+}
+
+func escapeTelegramHTML(text string) string {
+	return html.EscapeString(text)
+}
+
+func formatTelegramLink(url, label string) string {
+	safeLabel := escapeTelegramHTML(label)
+	if isValidURL(url) {
+		return fmt.Sprintf(`<a href="%s">%s</a>`, escapeTelegramHTML(url), safeLabel)
+	}
+	return fmt.Sprintf("%s: %s", safeLabel, escapeTelegramHTML(url))
+}
+
+func buildNewsMessage(item FeedItem, pubStr string) string {
+	title := escapeTelegramHTML(cleanFeedTitle(item.Title))
+	description := escapeTelegramHTML(cleanFeedDescription(item.Description))
+	articleLink := formatTelegramLink(item.Link, "Read article")
+	dateText := escapeTelegramHTML(pubStr)
+
+	return fmt.Sprintf(
+		"📰 <b>%s</b>\n\n%s\n\n🔗 %s\n📅 %s",
+		title,
+		description,
+		articleLink,
+		dateText,
+	)
+}
+
+func buildAutoNewsMessage(feedURL string, item FeedItem) string {
+	feedLink := formatTelegramLink(feedURL, "Feed")
+	title := escapeTelegramHTML(cleanFeedTitle(item.Title))
+	description := escapeTelegramHTML(cleanFeedDescription(item.Description))
+	articleLink := formatTelegramLink(item.Link, "Read article")
+
+	return fmt.Sprintf(
+		"🆕 New from %s\n\n📰 <b>%s</b>\n\n%s\n\n🔗 %s",
+		feedLink,
+		title,
+		description,
+		articleLink,
+	)
 }
