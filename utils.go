@@ -45,6 +45,79 @@ func truncate(s string, maxLen int) string {
 	return s[:maxLen] + "..."
 }
 
+func sourceNameFromURL(raw string) string {
+	parsedURL, err := u.Parse(strings.TrimSpace(raw))
+	if err != nil {
+		return ""
+	}
+
+	host := strings.ToLower(strings.TrimSpace(parsedURL.Hostname()))
+	host = strings.TrimPrefix(host, "www.")
+	if host == "" {
+		return ""
+	}
+
+	parts := strings.Split(host, ".")
+	if len(parts) == 1 {
+		return formatSourceToken(parts[0])
+	}
+
+	token := parts[len(parts)-2]
+	if len(token) <= 2 && len(parts) >= 3 {
+		token = parts[len(parts)-3]
+	}
+
+	name := formatSourceToken(token)
+	if name != "" {
+		return name
+	}
+
+	return formatSourceToken(host)
+}
+
+func formatSourceToken(token string) string {
+	token = strings.Trim(strings.ToLower(token), ".-_ ")
+	if token == "" {
+		return ""
+	}
+
+	segments := strings.FieldsFunc(token, func(r rune) bool {
+		return r == '-' || r == '_'
+	})
+	if len(segments) == 0 {
+		return ""
+	}
+
+	words := make([]string, 0, len(segments))
+	for _, segment := range segments {
+		if segment == "" {
+			continue
+		}
+
+		if len(segment) <= 4 {
+			words = append(words, strings.ToUpper(segment))
+			continue
+		}
+
+		words = append(words, strings.ToUpper(segment[:1])+segment[1:])
+	}
+
+	if len(words) == 0 {
+		return ""
+	}
+
+	return strings.Join(words, " ")
+}
+
+func sourceButtonLabel(prefix, rawURL string, maxLen int) string {
+	sourceName := sourceNameFromURL(rawURL)
+	if sourceName == "" {
+		sourceName = truncate(rawURL, maxLen)
+	}
+
+	return truncate(strings.TrimSpace(prefix+" "+sourceName), maxLen)
+}
+
 func sanitizeFeedText(raw string) string {
 	if raw == "" {
 		return ""

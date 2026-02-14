@@ -1,6 +1,7 @@
 package main
 
 import (
+	"strings"
 	"testing"
 )
 
@@ -257,6 +258,59 @@ func TestCleanFeedTitle(t *testing.T) {
 				t.Errorf("cleanFeedTitle(%q) = %q; want %q", tt.input, got, tt.expected)
 			}
 		})
+	}
+}
+
+func TestSourceNameFromURL(t *testing.T) {
+	tests := []struct {
+		name     string
+		input    string
+		expected string
+	}{
+		{
+			name:     "strips www and uses domain token",
+			input:    "https://www.theverge.com/rss/index.xml",
+			expected: "Theverge",
+		},
+		{
+			name:     "handles common co uk pattern",
+			input:    "https://feeds.bbci.co.uk/news/rss.xml",
+			expected: "BBCI",
+		},
+		{
+			name:     "handles localhost with port",
+			input:    "http://localhost:8080/feed",
+			expected: "Localhost",
+		},
+		{
+			name:     "invalid url returns empty",
+			input:    "not-a-url",
+			expected: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := sourceNameFromURL(tt.input)
+			if got != tt.expected {
+				t.Fatalf("sourceNameFromURL(%q) = %q; want %q", tt.input, got, tt.expected)
+			}
+		})
+	}
+}
+
+func TestSourceButtonLabel(t *testing.T) {
+	got := sourceButtonLabel("📰", "https://example.com/feed.xml", 56)
+	if strings.Contains(got, "http://") || strings.Contains(got, "https://") {
+		t.Fatalf("expected source button label without raw URL, got %q", got)
+	}
+
+	fallback := sourceButtonLabel("X", "not-a-url", 12)
+	if !strings.HasPrefix(fallback, "X ") {
+		t.Fatalf("expected prefix in fallback label, got %q", fallback)
+	}
+	if len(fallback) > 12 {
+		t.Fatalf("expected fallback label to be truncated to max length, got %d", len(fallback))
 	}
 }
 

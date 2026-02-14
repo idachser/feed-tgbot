@@ -94,5 +94,40 @@ func TestNewsSourceSelectionKeyboard(t *testing.T) {
 		if btn.Text == "" {
 			t.Fatalf("button text at row %d should not be empty", i)
 		}
+		if strings.Contains(btn.Text, "http://") || strings.Contains(btn.Text, "https://") {
+			t.Fatalf("expected source-name label without raw URL in row %d, got %q", i, btn.Text)
+		}
+	}
+}
+
+func TestRemoveSelectionKeyboardUsesSourceNameLabels(t *testing.T) {
+	userID := int64(101)
+	feeds := []string{
+		"https://www.theverge.com/rss/index.xml",
+		"https://feeds.bbci.co.uk/news/rss.xml",
+	}
+
+	keyboard := removeSelectionKeyboard(userID, feeds)
+
+	if len(keyboard.InlineKeyboard) != len(feeds) {
+		t.Fatalf("expected %d rows, got %d", len(feeds), len(keyboard.InlineKeyboard))
+	}
+
+	for i, row := range keyboard.InlineKeyboard {
+		if len(row) != 1 {
+			t.Fatalf("expected 1 button in row %d, got %d", i, len(row))
+		}
+
+		btn := row[0]
+		expectedCallback := fmt.Sprintf("%s:%d:%d", callbackRemoveFeed, userID, i)
+		if btn.CallbackData != expectedCallback {
+			t.Fatalf("unexpected callback data at row %d: got %q want %q", i, btn.CallbackData, expectedCallback)
+		}
+		if btn.Text == "" {
+			t.Fatalf("button text at row %d should not be empty", i)
+		}
+		if strings.Contains(btn.Text, "http://") || strings.Contains(btn.Text, "https://") {
+			t.Fatalf("expected source-name label without raw URL in row %d, got %q", i, btn.Text)
+		}
 	}
 }

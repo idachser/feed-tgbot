@@ -372,7 +372,7 @@ func newsSourceSelectionKeyboard(userID int64, feeds []string) models.InlineKeyb
 	for i, feed := range feeds {
 		buttons = append(buttons, []models.InlineKeyboardButton{
 			{
-				Text:         "📰 " + truncate(feed, 56),
+				Text:         sourceButtonLabel("📰", feed, 56),
 				CallbackData: fmt.Sprintf("%s:%d:%d", callbackNewsFeed, userID, i),
 			},
 		})
@@ -534,7 +534,7 @@ func removeSelectionKeyboard(userID int64, feeds []string) models.InlineKeyboard
 	for i, feed := range feeds {
 		buttons = append(buttons, []models.InlineKeyboardButton{
 			{
-				Text:         "❌ " + truncate(feed, 56),
+				Text:         sourceButtonLabel("❌", feed, 56),
 				CallbackData: fmt.Sprintf("%s:%d:%d", callbackRemoveFeed, userID, i),
 			},
 		})
